@@ -2,7 +2,7 @@
 Name=HyprDisplays
 Comment=Hyprland Display Configuration Manager
 Exec=/home/roses/random/hyprdisplays/hyprdisplays.py
-Icon=video-display
+Icon=hyprdisplays
 Terminal=false
 Type=Application
 Categories=Settings;System;

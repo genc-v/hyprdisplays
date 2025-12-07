@@ -58,44 +58,52 @@ class MonitorRow(Gtk.Box):
         mode_box.append(Gtk.Label(label="Mode:"))
         
         self.mode_combo = Gtk.ComboBoxText()
-        for mode in display.available_modes:
+        
+        # Find and select the current mode
+        current_index = -1
+        for i, mode in enumerate(display.available_modes):
             self.mode_combo.append_text(mode)
-        current_mode = f"{display.width}x{display.height}@{display.refresh_rate:.2f}Hz"
-        self.mode_combo.set_active_id(current_mode)
-        if self.mode_combo.get_active() == -1:
+            if '@' in mode and 'x' in mode:
+                try:
+                    parts = mode.replace('Hz', '').split('@')
+                    res = parts[0]
+                    refresh = float(parts[1])
+                    expected_res = f"{display.width}x{display.height}"
+                    # Match if resolution is same and refresh rate is very close (within 0.5Hz)
+                    if res == expected_res and abs(refresh - display.refresh_rate) < 0.5:
+                        current_index = i
+                except:
+                    pass
+        
+        # Set the active mode
+        if current_index >= 0:
+            self.mode_combo.set_active(current_index)
+        elif len(display.available_modes) > 0:
             self.mode_combo.set_active(0)
+        
         self.mode_combo.connect('changed', self.on_mode_changed)
         mode_box.append(self.mode_combo)
         self.append(mode_box)
         
-        # Position controls
-        pos_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        
-        # X position
-        pos_box.append(Gtk.Label(label="X:"))
+        # Store position internally (not editable by user directly)
         self.x_spin = Gtk.SpinButton()
         self.x_spin.set_adjustment(Gtk.Adjustment(value=display.x, lower=-10000, upper=10000, step_increment=10))
         self.x_spin.set_digits(0)
-        self.x_spin.connect('value-changed', lambda _: self.on_change())
-        pos_box.append(self.x_spin)
         
-        # Y position
-        pos_box.append(Gtk.Label(label="Y:"))
         self.y_spin = Gtk.SpinButton()
         self.y_spin.set_adjustment(Gtk.Adjustment(value=display.y, lower=-10000, upper=10000, step_increment=10))
         self.y_spin.set_digits(0)
-        self.y_spin.connect('value-changed', lambda _: self.on_change())
-        pos_box.append(self.y_spin)
         
-        # Scale
-        pos_box.append(Gtk.Label(label="Scale:"))
+        # Scale control (visible to user)
+        scale_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        scale_box.append(Gtk.Label(label="Scale:"))
         self.scale_spin = Gtk.SpinButton()
         self.scale_spin.set_adjustment(Gtk.Adjustment(value=display.scale, lower=0.5, upper=3.0, step_increment=0.1))
         self.scale_spin.set_digits(2)
         self.scale_spin.connect('value-changed', lambda _: self.on_change())
-        pos_box.append(self.scale_spin)
+        scale_box.append(self.scale_spin)
         
-        self.append(pos_box)
+        self.append(scale_box)
         
         # Transform
         transform_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -148,6 +156,9 @@ class MonitorRow(Gtk.Box):
         y = int(self.y_spin.get_value())
         scale = self.scale_spin.get_value()
         transform = self.transform_combo.get_active()
+        
+        # Debug output
+        print(f"get_config_line for {self.display.name}: position={x}x{y}, scale={scale}, enabled={self.enabled_check.get_active()}")
         
         if not self.enabled_check.get_active():
             return f"monitor={self.display.name},disabled"
@@ -520,18 +531,42 @@ class DisplayCanvas(Gtk.DrawingArea):
                 return True
         return False
     
+    def is_touching_any_monitor(self, x, y, width, height, monitor, all_monitors):
+        """Check if monitor at given position is touching at least one other enabled monitor"""
+        for other in all_monitors:
+            if other['row'] == monitor or not other['enabled']:
+                continue
+            
+            # Check if edges are touching (sharing an edge)
+            # Horizontal touch (left/right edges)
+            if (abs(x + width - other['x']) < 1 or abs(x - (other['x'] + other['width'])) < 1):
+                # Check if there's vertical overlap for the edge to actually touch
+                if not (y + height <= other['y'] or y >= other['y'] + other['height']):
+                    return True
+            
+            # Vertical touch (top/bottom edges)
+            if (abs(y + height - other['y']) < 1 or abs(y - (other['y'] + other['height'])) < 1):
+                # Check if there's horizontal overlap for the edge to actually touch
+                if not (x + width <= other['x'] or x >= other['x'] + other['width']):
+                    return True
+        
+        return False
+    
     def find_snap_position(self, monitor, x, y, width, height, all_monitors):
-        """Find snap position for monitor - always snap to edges, no gaps allowed"""
-        best_x, best_y = x, y
+        """Find snap position for monitor - must be touching another monitor, no gaps allowed"""
+        best_x, best_y = None, None
         min_distance = float('inf')
         alignment_threshold = 30  # Pixels to auto-align edges
         
-        # If there are no other monitors, snap to origin (0, 0)
-        if len(all_monitors) <= 1:
+        # Count enabled monitors (excluding the one being dragged)
+        enabled_others = [m for m in all_monitors if m['row'] != monitor and m['enabled']]
+        
+        # If there are no other enabled monitors, snap to origin (0, 0)
+        if len(enabled_others) == 0:
             return 0, 0
         
         for other in all_monitors:
-            if other['row'] == monitor:
+            if other['row'] == monitor or not other['enabled']:
                 continue
             
             # Calculate all edge snap positions (touching edges only)
@@ -544,11 +579,16 @@ class DisplayCanvas(Gtk.DrawingArea):
                 {'x': x, 'y': other['y'] + other['height'], 'align_x': True},
                 # Top edge of other monitor (this monitor's bottom edge touches)
                 {'x': x, 'y': other['y'] - height, 'align_x': True},
-                # Corner snaps (aligned corners)
+                # Corner snaps (diagonal corners touching)
                 {'x': other['x'] + other['width'], 'y': other['y']},
                 {'x': other['x'] - width, 'y': other['y']},
                 {'x': other['x'] + other['width'], 'y': other['y'] + other['height'] - height},
                 {'x': other['x'] - width, 'y': other['y'] + other['height'] - height},
+                # Top right / bottom left corners
+                {'x': other['x'], 'y': other['y'] + other['height']},
+                {'x': other['x'], 'y': other['y'] - height},
+                {'x': other['x'] + other['width'] - width, 'y': other['y'] + other['height']},
+                {'x': other['x'] + other['width'] - width, 'y': other['y'] - height},
             ]
             
             for snap in snap_configs:
@@ -573,13 +613,18 @@ class DisplayCanvas(Gtk.DrawingArea):
                     elif abs(x + width/2 - other['x'] - other['width']/2) < alignment_threshold:
                         snap_x = other['x'] + other['width']/2 - width/2  # Center align
                 
-                distance = ((x - snap_x) ** 2 + (y - snap_y) ** 2) ** 0.5
-                
-                # Only snap if it doesn't create overlap
+                # Check if this position is valid (no overlap and touching at least one monitor)
                 if not self.check_overlap(snap_x, snap_y, width, height, monitor, all_monitors):
-                    if distance < min_distance:
-                        min_distance = distance
-                        best_x, best_y = snap_x, snap_y
+                    if self.is_touching_any_monitor(snap_x, snap_y, width, height, monitor, all_monitors):
+                        distance = ((x - snap_x) ** 2 + (y - snap_y) ** 2) ** 0.5
+                        if distance < min_distance:
+                            min_distance = distance
+                            best_x, best_y = snap_x, snap_y
+        
+        # If no valid position found (shouldn't happen if monitors are already connected), 
+        # return current position to prevent monitor from moving
+        if best_x is None:
+            return int(monitor.x_spin.get_value()), int(monitor.y_spin.get_value())
         
         return best_x, best_y
     
@@ -656,17 +701,11 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         identify_btn.connect('clicked', lambda _: self.show_display_identifiers())
         header.pack_start(identify_btn)
         
-        # Apply button
-        apply_btn = Gtk.Button(label="Apply")
+        # Apply and Save button (combined)
+        apply_btn = Gtk.Button(label="Apply & Save")
         apply_btn.add_css_class("suggested-action")
-        apply_btn.connect('clicked', lambda _: self.apply_config())
+        apply_btn.connect('clicked', lambda _: self.save_to_config())
         header.pack_end(apply_btn)
-        
-        # Save button
-        save_btn = Gtk.Button(label="Save to Config")
-        save_btn.add_css_class("suggested-action")
-        save_btn.connect('clicked', lambda _: self.save_to_config())
-        header.pack_end(save_btn)
         
         # Create paned view: canvas on left, settings on right
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -798,36 +837,206 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         except Exception as e:
             self.status_label.set_text(f"Error applying config: {e}")
     
-    def save_to_config(self):
+    def show_revert_dialog(self, countdown=15):
+        """Show a dialog asking if the user wants to keep the changes"""
+        dialog = Adw.MessageDialog.new(self)
+        dialog.set_heading("Keep display configuration?")
+        dialog.set_body(f"Reverting in {countdown} seconds...")
+        dialog.add_response("revert", "Revert")
+        dialog.add_response("keep", "Keep Changes")
+        dialog.set_response_appearance("keep", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("keep")
+        dialog.set_close_response("revert")
+        
+        # Store the countdown state
+        dialog.countdown = countdown
+        dialog.reverted = False
+        
+        def update_countdown():
+            if dialog.countdown > 0 and not dialog.reverted:
+                dialog.countdown -= 1
+                dialog.set_body(f"Reverting in {dialog.countdown} seconds...")
+                return True  # Continue timeout
+            elif dialog.countdown <= 0 and not dialog.reverted:
+                # Time's up, revert
+                dialog.reverted = True
+                dialog.close()
+                self.revert_config()
+                return False
+            return False
+        
+        def on_response(dialog, response):
+            print(f"Dialog response: {response}")
+            dialog.reverted = True  # Stop countdown
+            if response == "revert":
+                print("User chose to revert")
+                self.revert_config()
+            else:
+                print("User chose to keep changes")
+                self.save_config_permanently()
+        
+        dialog.connect("response", on_response)
+        GLib.timeout_add_seconds(1, update_countdown)
+        dialog.present()
+    
+    def save_config_permanently(self):
         """Save configuration to Hyprland config file"""
-        config_path = Path.home() / ".config" / "hypr" / "hyprland.conf"
+        hypr_dir = Path.home() / ".config" / "hypr"
+        config_path = hypr_dir / "hyprland.conf"
+        monitors_conf_path = hypr_dir / "monitors.conf"
         
         try:
-            # Read current config
+            # Generate monitor lines first
+            monitor_lines = []
+            for row in self.monitor_rows:
+                config_line = row.get_config_line()
+                monitor_lines.append(config_line + '\n')
+                # Debug: print what we're saving
+                print(f"Saving: {config_line}")
+            
+            # Strategy: Save to monitors.conf which is typically sourced last
+            # This ensures our settings override any earlier monitor configs
+            # Also add header to indicate this file is managed by HyprDisplays
+            monitors_content = [
+                "# Monitor configuration - Generated by HyprDisplays\n",
+                "# This file is automatically managed by HyprDisplays.\n",
+                "# Manual changes may be overwritten.\n",
+                "\n"
+            ] + monitor_lines
+            
+            # Write to monitors.conf
+            with open(monitors_conf_path, 'w') as f:
+                f.writelines(monitors_content)
+            
+            print(f"Config saved to {monitors_conf_path}")
+            
+            # Also clean up monitor lines from main config and sourced files
+            # to avoid conflicts
+            files_to_clean = [
+                config_path,
+                hypr_dir / "hyprland" / "general.conf",
+                hypr_dir / "custom" / "general.conf"
+            ]
+            
+            for file_path in files_to_clean:
+                if not file_path.exists():
+                    continue
+                
+                try:
+                    with open(file_path, 'r') as f:
+                        lines = f.readlines()
+                    
+                    # Remove monitor lines and HyprDisplays headers, but keep commented lines
+                    # Also keep the "source=monitors.conf" line if present
+                    new_lines = []
+                    for line in lines:
+                        stripped = line.strip()
+                        # Keep the line if:
+                        # - It's not a monitor= line (or is commented)
+                        # - It's not an old HyprDisplays header
+                        # - It's a source=monitors.conf line (we need this!)
+                        if (not stripped.startswith('monitor=') or stripped.startswith('#')) and \
+                           '# Monitor configuration - Generated by HyprDisplays' not in line and \
+                           'This file is automatically managed by HyprDisplays' not in line:
+                            new_lines.append(line)
+                        elif 'source=monitors.conf' in line or 'source = monitors.conf' in line:
+                            # Keep the source line
+                            new_lines.append(line)
+                    
+                    # Write back
+                    with open(file_path, 'w') as f:
+                        f.writelines(new_lines)
+                    
+                    print(f"Cleaned monitor lines from {file_path}")
+                except Exception as e:
+                    print(f"Warning: Could not clean {file_path}: {e}")
+            
+            # Ensure main config sources monitors.conf
+            # Check if it already has the source line
             if config_path.exists():
                 with open(config_path, 'r') as f:
-                    lines = f.readlines()
-            else:
-                lines = []
+                    content = f.read()
+                
+                if 'source=monitors.conf' not in content and 'source = monitors.conf' not in content:
+                    # Add source line
+                    with open(config_path, 'a') as f:
+                        f.write('\n# Monitor configuration\nsource=monitors.conf\n')
+                    print("Added source=monitors.conf to hyprland.conf")
             
-            # Remove old monitor lines
-            new_lines = [line for line in lines if not line.strip().startswith('monitor=')]
+            # Re-apply the configuration to ensure it takes effect
+            # This ensures the saved config matches what's currently displayed
+            for row in self.monitor_rows:
+                config_line = row.get_config_line()
+                cmd = config_line.replace("monitor=", "")
+                result = subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
+                                      capture_output=True, text=True, check=False)
+                if result.returncode != 0:
+                    print(f"Warning: Failed to apply monitor config: {result.stderr}")
             
-            # Add new monitor configurations at the beginning
-            monitor_lines = [row.get_config_line() + '\n' for row in self.monitor_rows]
-            final_lines = ['# Monitor configuration - Generated by HyprDisplays\n'] + monitor_lines + ['\n'] + new_lines
-            
-            # Write back
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_path, 'w') as f:
-                f.writelines(final_lines)
-            
-            self.status_label.set_text(f"Saved to {config_path}")
-            
-            # Also apply the config
-            self.apply_config()
+            self.status_label.set_text(f"Configuration saved to monitors.conf and applied!")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.status_label.set_text(f"Error saving config: {e}")
+    
+    def revert_config(self):
+        """Revert to previous configuration"""
+        print("=== REVERTING CONFIGURATION ===")
+        try:
+            for row in self.monitor_rows:
+                if not hasattr(row.display, 'old_config_line'):
+                    print(f"ERROR: No old_config_line for {row.display.name}")
+                    self.status_label.set_text("Error: Cannot revert - no saved configuration")
+                    return
+                
+                config_line = row.display.old_config_line
+                cmd = config_line.replace("monitor=", "")
+                print(f"Reverting {row.display.name}: {cmd}")
+                result = subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
+                                      capture_output=True, text=True, check=False)
+                if result.returncode != 0:
+                    print(f"ERROR reverting {row.display.name}: {result.stderr}")
+                else:
+                    print(f"✓ Reverted {row.display.name}")
+            
+            self.status_label.set_text("Configuration reverted")
+            print("Reloading displays...")
+            GLib.timeout_add_seconds(1, lambda: self.load_displays())
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.status_label.set_text(f"Error reverting config: {e}")
+    
+    def save_to_config(self):
+        """Apply configuration and ask user to confirm or revert"""
+        try:
+            # Save current config for potential revert
+            print("=== SAVING OLD CONFIG FOR REVERT ===")
+            for row in self.monitor_rows:
+                old_line = f"monitor={row.display.name},{row.display.width}x{row.display.height}@{row.display.refresh_rate:.2f},{row.display.x}x{row.display.y},{row.display.scale},transform,{row.display.transform}"
+                row.display.old_config_line = old_line
+                print(f"Old config for {row.display.name}: {old_line}")
+            
+            # Apply new config
+            print("=== APPLYING NEW CONFIG ===")
+            for row in self.monitor_rows:
+                config_line = row.get_config_line()
+                cmd = config_line.replace("monitor=", "")
+                print(f"Applying: {cmd}")
+                result = subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
+                                      capture_output=True, text=True, check=False)
+                if result.returncode != 0:
+                    print(f"ERROR: {result.stderr}")
+                    raise Exception(f"Failed to apply config: {result.stderr}")
+            
+            self.status_label.set_text("Configuration applied - Confirm to keep changes")
+            
+            # Show revert dialog
+            self.show_revert_dialog()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.status_label.set_text(f"Error applying config: {e}")
     
     def show_display_identifiers(self):
         """Show overlay on each display with its name/number"""
