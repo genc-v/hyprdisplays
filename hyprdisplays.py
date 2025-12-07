@@ -36,6 +36,13 @@ class MonitorRow(Gtk.Box):
         self.display = display
         self.on_change = on_change
         self.on_primary_change = on_primary_change
+        self.on_monitor_size_changed = None  # Will be set by window class
+        
+        # Store previous size to detect changes
+        self.prev_width = display.width / display.scale
+        self.prev_height = display.height / display.scale
+        if display.transform in [1, 3]:
+            self.prev_width, self.prev_height = self.prev_height, self.prev_width
         
         # Header with monitor name
         header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -100,7 +107,7 @@ class MonitorRow(Gtk.Box):
         self.scale_spin = Gtk.SpinButton()
         self.scale_spin.set_adjustment(Gtk.Adjustment(value=display.scale, lower=0.5, upper=3.0, step_increment=0.1))
         self.scale_spin.set_digits(2)
-        self.scale_spin.connect('value-changed', lambda _: self.on_change())
+        self.scale_spin.connect('value-changed', self.on_setting_changed)
         scale_box.append(self.scale_spin)
         
         self.append(scale_box)
@@ -113,13 +120,13 @@ class MonitorRow(Gtk.Box):
         for t in transforms:
             self.transform_combo.append_text(t)
         self.transform_combo.set_active(display.transform if display.transform < 4 else 0)
-        self.transform_combo.connect('changed', lambda _: self.on_change())
+        self.transform_combo.connect('changed', self.on_setting_changed)
         transform_box.append(self.transform_combo)
         
         # Disabled toggle
         self.enabled_check = Gtk.CheckButton(label="Enabled")
         self.enabled_check.set_active(not display.disabled)
-        self.enabled_check.connect('toggled', lambda _: self.on_change())
+        self.enabled_check.connect('toggled', self.on_setting_changed)
         transform_box.append(self.enabled_check)
         
         self.append(transform_box)
@@ -139,6 +146,13 @@ class MonitorRow(Gtk.Box):
         self.primary_button.set_active(is_primary)
     
     def on_mode_changed(self, combo):
+        self.on_change()
+    
+    def on_setting_changed(self, widget):
+        """Called when scale, rotation, or enabled state changes - triggers canvas update"""
+        # When any monitor size changes (due to rotation/scale), adjust connected monitors
+        if hasattr(self, 'on_monitor_size_changed') and self.on_monitor_size_changed:
+            self.on_monitor_size_changed(self)
         self.on_change()
     
     def get_config_line(self):
@@ -220,8 +234,16 @@ class DisplayCanvas(Gtk.DrawingArea):
             current_x = int(row.x_spin.get_value())
             current_y = int(row.y_spin.get_value())
             current_scale = row.scale_spin.get_value()
+            current_transform = row.transform_combo.get_active()
+            
+            # Calculate logical size based on scale
             logical_width = row.display.width / current_scale
             logical_height = row.display.height / current_scale
+            
+            # Swap width/height for 90° and 270° rotations
+            if current_transform in [1, 3]:  # 90° or 270°
+                logical_width, logical_height = logical_height, logical_width
+            
             monitor_data.append({
                 'row': row,
                 'x': current_x,
@@ -387,6 +409,10 @@ class DisplayCanvas(Gtk.DrawingArea):
         
         # Draw each monitor
         for i, m in enumerate(monitor_data, 1):
+            if not m['enabled']:
+                # Skip drawing disabled monitors or show them dimmed
+                continue
+            
             x, y = self.monitor_to_canvas_coords(m['x'], m['y'])
             w = m['width'] * self.scale_factor
             h = m['height'] * self.scale_factor
@@ -409,10 +435,8 @@ class DisplayCanvas(Gtk.DrawingArea):
                 cr.set_source_rgb(0.35, 0.55, 0.85)
             elif is_primary:
                 cr.set_source_rgb(0.35, 0.55, 0.35)  # Green tint for primary
-            elif m['enabled']:
-                cr.set_source_rgb(0.25, 0.45, 0.75)
             else:
-                cr.set_source_rgb(0.4, 0.4, 0.4)
+                cr.set_source_rgb(0.25, 0.45, 0.75)
             
             cr.rectangle(x, y, w, h)
             cr.fill()
@@ -461,7 +485,18 @@ class DisplayCanvas(Gtk.DrawingArea):
                 name_text += " ★"  # Star for primary monitor
             cr.show_text(name_text)
             
+            # Draw rotation indicator if rotated
+            transform = m['row'].transform_combo.get_active()
+            if transform > 0:
+                rotation_labels = ["", "90°", "180°", "270°"]
+                cr.set_font_size(10)
+                cr.set_source_rgba(1, 1, 0.2, 0.9)  # Yellow for rotation indicator
+                rotation_text = f"⟲ {rotation_labels[transform]}"
+                cr.move_to(x + 8, y + 35)
+                cr.show_text(rotation_text)
+            
             # Draw resolution and scale at bottom
+            cr.set_source_rgb(1, 1, 1)
             cr.set_font_size(10)
             scale_val = m['row'].scale_spin.get_value()
             info_text = f"{int(m['width'])}x{int(m['height'])} @{scale_val:.1f}x"
@@ -483,6 +518,10 @@ class DisplayCanvas(Gtk.DrawingArea):
             return None
         
         for m in monitor_data:
+            # Skip disabled monitors
+            if not m['enabled']:
+                continue
+            
             mx, my = self.monitor_to_canvas_coords(m['x'], m['y'])
             mw = m['width'] * self.scale_factor
             mh = m['height'] * self.scale_factor
@@ -792,6 +831,7 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                 
                 display = DisplayConfig(display_data)
                 row = MonitorRow(display, self.on_canvas_update, self.on_primary_changed)
+                row.on_monitor_size_changed = self.on_monitor_size_changed  # Set callback
                 self.monitor_rows.append(row)
                 self.content_box.append(row)
             
@@ -799,6 +839,160 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
             self.status_label.set_text(f"Loaded {len(displays_data)} display(s)")
         except Exception as e:
             self.status_label.set_text(f"Error loading displays: {e}")
+    
+    def on_monitor_size_changed(self, changed_row):
+        """Called when any monitor size/rotation/enabled changes - adjust connected monitors"""
+        print(f"=== MONITOR SIZE CHANGED: {changed_row.display.name} ===")
+        
+        # Get the OLD size from the stored previous values
+        old_width = changed_row.prev_width
+        old_height = changed_row.prev_height
+        
+        # Calculate NEW size
+        scale = changed_row.scale_spin.get_value()
+        transform = changed_row.transform_combo.get_active()
+        
+        new_width = changed_row.display.width / scale
+        new_height = changed_row.display.height / scale
+        
+        if transform in [1, 3]:
+            new_width, new_height = new_height, new_width
+        
+        # Update stored size
+        changed_row.prev_width = new_width
+        changed_row.prev_height = new_height
+        
+        changed_x = int(changed_row.x_spin.get_value())
+        changed_y = int(changed_row.y_spin.get_value())
+        
+        print(f"  Old size: {old_width}x{old_height}")
+        print(f"  New size: {new_width}x{new_height}")
+        print(f"  Position: {changed_x}x{changed_y}")
+        
+        # Calculate the change in size
+        width_delta = new_width - old_width
+        height_delta = new_height - old_height
+        
+        if abs(width_delta) < 1 and abs(height_delta) < 1:
+            print("  No significant size change, skipping adjustment")
+            return
+        
+        # Adjust all monitors that are positioned relative to the changed monitor
+        for row in self.monitor_rows:
+            if row == changed_row or not row.enabled_check.get_active():
+                continue
+            
+            # Don't move the primary monitor (it stays at 0x0)
+            if row.display.focused:
+                continue
+            
+            current_x = int(row.x_spin.get_value())
+            current_y = int(row.y_spin.get_value())
+            
+            # Check if this monitor was adjacent to the changed one
+            # Right edge: monitor's X equals changed monitor's old right edge
+            old_right_edge = changed_x + old_width
+            was_at_right = abs(current_x - old_right_edge) < 5  # Allow small tolerance
+            
+            # Bottom edge: monitor's Y equals changed monitor's old bottom edge
+            old_bottom_edge = changed_y + old_height
+            was_at_bottom = abs(current_y - old_bottom_edge) < 5
+            
+            new_x = current_x
+            new_y = current_y
+            
+            if was_at_right and abs(width_delta) > 1:
+                # Monitor was to the right, adjust X position
+                new_x = int(changed_x + new_width)
+                print(f"  Adjusting {row.display.name} X: {current_x} -> {new_x} (maintaining right edge connection)")
+            
+            if was_at_bottom and abs(height_delta) > 1:
+                # Monitor was below, adjust Y position
+                new_y = int(changed_y + new_height)
+                print(f"  Adjusting {row.display.name} Y: {current_y} -> {new_y} (maintaining bottom edge connection)")
+            
+            if new_x != current_x or new_y != current_y:
+                row.x_spin.set_value(new_x)
+                row.y_spin.set_value(new_y)
+        
+        # Update canvas
+        self.canvas.queue_draw()
+    
+    def on_primary_size_changed(self):
+        """Called when primary monitor size/rotation/enabled changes - reposition other monitors"""
+        print("=== PRIMARY MONITOR SIZE CHANGED ===")
+        
+        # Find the primary monitor
+        primary_row = None
+        for row in self.monitor_rows:
+            if row.display.focused:
+                primary_row = row
+                break
+        
+        if not primary_row:
+            return
+        
+        # Calculate primary monitor's current size
+        primary_scale = primary_row.scale_spin.get_value()
+        primary_transform = primary_row.transform_combo.get_active()
+        primary_enabled = primary_row.enabled_check.get_active()
+        
+        primary_width = primary_row.display.width / primary_scale
+        primary_height = primary_row.display.height / primary_scale
+        
+        # Swap dimensions for 90/270 rotation
+        if primary_transform in [1, 3]:
+            primary_width, primary_height = primary_height, primary_width
+        
+        # If primary is disabled, treat it as having no size
+        if not primary_enabled:
+            primary_width = 0
+            primary_height = 0
+        
+        print(f"Primary monitor: {primary_row.display.name}, size: {primary_width}x{primary_height}, enabled: {primary_enabled}")
+        
+        # Primary is always at 0x0, so reposition other monitors relative to it
+        for row in self.monitor_rows:
+            if row == primary_row:
+                # Primary always stays at 0x0
+                row.x_spin.set_value(0)
+                row.y_spin.set_value(0)
+                continue
+            
+            # Get current position
+            current_x = int(row.x_spin.get_value())
+            current_y = int(row.y_spin.get_value())
+            
+            # Calculate this monitor's size
+            scale = row.scale_spin.get_value()
+            transform = row.transform_combo.get_active()
+            width = row.display.width / scale
+            height = row.display.height / scale
+            
+            if transform in [1, 3]:
+                width, height = height, width
+            
+            print(f"Monitor {row.display.name}: current pos {current_x}x{current_y}, size {width}x{height}")
+            
+            # Check if this monitor overlaps with primary
+            # Primary is at 0,0 with size primary_width x primary_height
+            overlaps = not (current_x + width <= 0 or 
+                          current_x >= primary_width or
+                          current_y + height <= 0 or
+                          current_y >= primary_height)
+            
+            if overlaps or primary_width == 0:
+                # Need to reposition - place it to the right of primary
+                new_x = int(primary_width)
+                new_y = 0
+                
+                print(f"  Repositioning to {new_x}x{new_y} (was overlapping or primary disabled)")
+                
+                row.x_spin.set_value(new_x)
+                row.y_spin.set_value(new_y)
+        
+        # Update canvas
+        self.canvas.queue_draw()
     
     def on_primary_changed(self, new_primary_row):
         """Handle when user selects a different primary monitor"""
