@@ -64,6 +64,11 @@ class SettingsPage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.title = title
         self.icon_name = icon_name
+        # Add padding to prevent scrollbar overlap
+        self.set_margin_start(12)
+        self.set_margin_end(12)
+        self.set_margin_top(12)
+        self.set_margin_bottom(12)
         
     def create_group(self, title, description=None):
         """Create a preference group"""
@@ -784,6 +789,7 @@ class KeybindsPage(SettingsPage):
         
         # List of keybinds
         self.keybinds_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.keybinds_list.set_margin_end(12)  # Add padding to avoid scrollbar overlap
         info.add(self.keybinds_list)
         
         self.all_keybinds = []  # Store for search
@@ -866,13 +872,14 @@ class KeybindsPage(SettingsPage):
             friendly_key = self.get_friendly_key_name(key)
             title = f"{mods} + {friendly_key}" if mods else friendly_key
             
+            import html
             row.set_title(title)
-            row.set_subtitle(action[:100])
+            row.set_subtitle(html.escape(action[:100]))
             
             # Action details in expanded view
             action_row = Adw.ActionRow()
             action_row.set_title("Action")
-            action_row.set_subtitle(action)
+            action_row.set_subtitle(html.escape(action))
             row.add_row(action_row)
             
             type_row = Adw.ActionRow()
@@ -948,55 +955,112 @@ class KeybindsPage(SettingsPage):
             custom_box.set_visible(combo.get_active_id() == "custom")
         action_combo.connect('changed', on_action_changed)
         
-        # Step 2: Choose modifier keys
-        content.append(Gtk.Label(label="<b>2. Choose Modifier Keys</b>", use_markup=True, xalign=0))
+        content.append(Gtk.Label(label="<b>2. Press the Key You Want to Use</b>", use_markup=True, xalign=0))
         
-        mod_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        super_check = Gtk.CheckButton(label="Super (Windows key)")
-        super_check.set_active(True)
-        ctrl_check = Gtk.CheckButton(label="Ctrl")
-        alt_check = Gtk.CheckButton(label="Alt")
-        shift_check = Gtk.CheckButton(label="Shift")
+        # Key display area (shows what was pressed)
+        key_display_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         
-        mod_box.append(super_check)
-        mod_box.append(ctrl_check)
-        mod_box.append(alt_check)
-        mod_box.append(shift_check)
-        content.append(mod_box)
+        # Create a frame to capture key events
+        key_frame = Gtk.Frame()
+        key_frame.set_size_request(-1, 80)
         
-        # Step 3: Choose key
-        content.append(Gtk.Label(label="<b>3. Choose Key</b>", use_markup=True, xalign=0))
+        key_label = Gtk.Label(label="Click here and press any key...")
+        key_label.set_margin_start(12)
+        key_label.set_margin_end(12)
+        key_label.set_margin_top(12)
+        key_label.set_margin_bottom(12)
+        key_label.set_wrap(True)
+        key_frame.set_child(key_label)
         
-        key_entry = Gtk.Entry()
-        key_entry.set_placeholder_text("e.g., T, Return, F1, Print, etc.")
-        content.append(key_entry)
+        detected_key = {"key": "", "mods": []}
         
-        # Common keys helper
-        common_keys_label = Gtk.Label(
-            label="Common keys: Letters (A-Z), Numbers (0-9), F1-F12, Return, Space, Print, Tab",
+        def on_key_press(controller, keyval, keycode, state):
+            """Capture key press"""
+            # Get key name
+            keyname = Gdk.keyval_name(keyval)
+            
+            # Ignore modifier keys by themselves
+            if keyname in ["Control_L", "Control_R", "Alt_L", "Alt_R", 
+                          "Shift_L", "Shift_R", "Super_L", "Super_R",
+                          "Meta_L", "Meta_R"]:
+                return True
+            
+            # Detect modifiers from event
+            mods = []
+            if state & Gdk.ModifierType.CONTROL_MASK:
+                mods.append("Ctrl")
+            if state & Gdk.ModifierType.ALT_MASK:
+                mods.append("Alt")
+            if state & Gdk.ModifierType.SHIFT_MASK:
+                mods.append("Shift")
+            if state & Gdk.ModifierType.SUPER_MASK:
+                mods.append("Super")
+            
+            detected_key["key"] = keyname
+            detected_key["mods"] = mods
+            
+            # Update UI
+            if mods:
+                display_text = " + ".join(mods) + " + " + (self.KEY_LABELS.get(keyname, keyname))
+            else:
+                display_text = self.KEY_LABELS.get(keyname, keyname)
+            
+            key_label.set_markup(f"<big><b>✓ Recorded: {display_text}</b></big>")
+            
+            return True
+        
+        # Set up key event controller on the dialog itself
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", on_key_press)
+        dialog.add_controller(key_controller)
+        
+        # Make the frame focusable
+        key_frame.set_focusable(True)
+        
+        # Add click handler to focus
+        click_controller = Gtk.GestureClick()
+        def on_click(gesture, n_press, x, y):
+            key_frame.grab_focus()
+            key_label.set_text("Press any key now...")
+        click_controller.connect("pressed", on_click)
+        key_frame.add_controller(click_controller)
+        
+        key_display_box.append(key_frame)
+        
+        # Helper text
+        helper = Gtk.Label(
+            label="Click the box above and press any key combination.\nModifiers will be detected automatically!",
             wrap=True,
             xalign=0
         )
-        common_keys_label.add_css_class("dim-label")
-        content.append(common_keys_label)
+        helper.add_css_class("dim-label")
+        key_display_box.append(helper)
         
-        # Media keys dropdown
+        content.append(key_display_box)
+        
+        # Or choose from media keys
+        content.append(Gtk.Label(label="Or choose a media/special key:", xalign=0))
         media_combo = Gtk.ComboBoxText()
-        media_combo.append("", "Or choose a media key...")
-        media_combo.append("XF86AudioNext", "Media Next")
-        media_combo.append("XF86AudioPrev", "Media Previous")
-        media_combo.append("XF86AudioPlay", "Media Play/Pause")
-        media_combo.append("XF86AudioRaiseVolume", "Volume Up")
-        media_combo.append("XF86AudioLowerVolume", "Volume Down")
-        media_combo.append("XF86AudioMute", "Mute")
-        media_combo.append("XF86MonBrightnessUp", "Brightness Up")
-        media_combo.append("XF86MonBrightnessDown", "Brightness Down")
+        media_combo.append("", "Choose a special key...")
+        media_combo.append("XF86AudioNext", "🎵 Media Next")
+        media_combo.append("XF86AudioPrev", "🎵 Media Previous")
+        media_combo.append("XF86AudioPlay", "🎵 Play/Pause")
+        media_combo.append("XF86AudioRaiseVolume", "🔊 Volume Up")
+        media_combo.append("XF86AudioLowerVolume", "🔉 Volume Down")
+        media_combo.append("XF86AudioMute", "🔇 Mute")
+        media_combo.append("XF86MonBrightnessUp", "☀️ Brightness Up")
+        media_combo.append("XF86MonBrightnessDown", "🌙 Brightness Down")
+        media_combo.append("Print", "📸 Screenshot/Print Screen")
         media_combo.set_active(0)
         content.append(media_combo)
         
         def on_media_selected(combo):
             if combo.get_active_id():
-                key_entry.set_text(combo.get_active_id())
+                detected_key["key"] = combo.get_active_id()
+                detected_key["mods"] = []
+                display = self.KEY_LABELS.get(combo.get_active_id(), combo.get_active_id())
+                key_label.set_markup(f"<big><b>✓ Selected: {display}</b></big>")
+        
         media_combo.connect('changed', on_media_selected)
         
         # Buttons
@@ -1015,23 +1079,14 @@ class KeybindsPage(SettingsPage):
         content.append(btn_box)
         
         def on_add(btn):
-            # Build modifier string
-            mods = []
-            if super_check.get_active():
-                mods.append("Super")
-            if ctrl_check.get_active():
-                mods.append("Ctrl")
-            if alt_check.get_active():
-                mods.append("Alt")
-            if shift_check.get_active():
-                mods.append("Shift")
-            
-            mod_str = " ".join(mods) if mods else ""
-            
-            # Get key
-            key = key_entry.get_text().strip()
+            # Get key from recording
+            key = detected_key.get("key", "")
             if not key:
                 return
+            
+            # Build modifier string from detected mods
+            mods = detected_key.get("mods", [])
+            mod_str = " ".join(mods) if mods else ""
             
             # Get action
             if action_combo.get_active_id() == "custom":
@@ -1159,6 +1214,7 @@ class RulesPage(SettingsPage):
         
         # List of rules
         self.rules_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.rules_list.set_margin_end(12)  # Add padding to avoid scrollbar overlap
         info.add(self.rules_list)
         
         self.all_rules = []
@@ -1218,18 +1274,19 @@ class RulesPage(SettingsPage):
             rule_action = rule_parts[0].strip()
             rule_match = rule_parts[1].strip()
             
-            row.set_title(f"Rule: {rule_action}")
-            row.set_subtitle(f"Matches: {rule_match}")
+            import html
+            row.set_title(f"Rule: {html.escape(rule_action)}")
+            row.set_subtitle(f"Matches: {html.escape(rule_match)}")
             
             # Details in expanded view
             action_row = Adw.ActionRow()
             action_row.set_title("Action")
-            action_row.set_subtitle(rule_action)
+            action_row.set_subtitle(html.escape(rule_action))
             row.add_row(action_row)
             
             match_row = Adw.ActionRow()
             match_row.set_title("Match Pattern")
-            match_row.set_subtitle(rule_match)
+            match_row.set_subtitle(html.escape(rule_match))
             row.add_row(match_row)
             
             type_row = Adw.ActionRow()
@@ -1423,12 +1480,34 @@ class RulesPage(SettingsPage):
 class AutostartPage(SettingsPage):
     """Autostart programs with list view"""
     
+    # Common programs to autostart
+    COMMON_PROGRAMS = [
+        ("waybar", "Status Bar (Waybar)"),
+        ("hyprpaper", "Wallpaper Manager (Hyprpaper)"),
+        ("dunst", "Notification Daemon (Dunst)"),
+        ("mako", "Notification Daemon (Mako)"),
+        ("nm-applet", "Network Manager Applet"),
+        ("blueman-applet", "Bluetooth Manager"),
+        ("wl-paste --watch cliphist store", "Clipboard Manager"),
+        ("polkit-gnome-authentication-agent-1", "Authentication Agent"),
+        ("gnome-keyring-daemon --start --components=secrets", "Keyring Manager"),
+        ("hypridle", "Idle Manager (Hypridle)"),
+        ("udiskie", "USB Auto-mounter"),
+        ("easyeffects --gapplication-service", "Audio Effects"),
+    ]
+    
     def __init__(self):
         super().__init__("Autostart", "system-run-symbolic")
         self.hypr_dir = Path.home() / ".config" / "hypr"
         self.execs_file = self.find_config_file("execs.conf")
         
-        info = self.create_group("Autostart Programs", "Programs to run on Hyprland start")
+        # Search bar
+        search_bar = Gtk.SearchEntry()
+        search_bar.set_placeholder_text("Search autostart programs...")
+        search_bar.connect('search-changed', self.on_search)
+        self.append(search_bar)
+        
+        info = self.create_group("Autostart Programs", "Programs that launch when Hyprland starts")
         
         # Toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1437,6 +1516,7 @@ class AutostartPage(SettingsPage):
         
         add_btn = Gtk.Button(label="Add Program")
         add_btn.set_icon_name("list-add-symbolic")
+        add_btn.add_css_class("suggested-action")
         add_btn.connect('clicked', self.add_program)
         toolbar.append(add_btn)
         
@@ -1449,8 +1529,10 @@ class AutostartPage(SettingsPage):
         
         # List of programs
         self.programs_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.programs_list.set_margin_end(12)  # Add padding to avoid scrollbar overlap
         info.add(self.programs_list)
         
+        self.all_programs = []
         self.load_programs()
     
     def find_config_file(self, filename):
@@ -1463,12 +1545,20 @@ class AutostartPage(SettingsPage):
                 return path
         return paths[0]
     
+    def on_search(self, entry):
+        search_text = entry.get_text().lower()
+        for row, prog_data in self.all_programs:
+            visible = search_text in prog_data.lower()
+            row.set_visible(visible)
+    
     def load_programs(self):
         while child := self.programs_list.get_first_child():
             self.programs_list.remove(child)
         
+        self.all_programs = []
+        
         if not self.execs_file.exists():
-            label = Gtk.Label(label="No execs file found")
+            label = Gtk.Label(label="No execs file found. Click 'Add Program' to create one!")
             self.programs_list.append(label)
             return
         
@@ -1484,9 +1574,8 @@ class AutostartPage(SettingsPage):
                 self.add_program_row(line, i)
     
     def add_program_row(self, exec_line, line_num):
-        row = Adw.ActionRow()
+        row = Adw.ExpanderRow()
         
-        # Parse: exec-once = command
         parts = exec_line.strip().split('=', 1)
         if len(parts) < 2:
             return
@@ -1494,56 +1583,131 @@ class AutostartPage(SettingsPage):
         exec_type = parts[0].strip()
         command = parts[1].strip()
         
-        row.set_title(exec_type)
-        row.set_subtitle(command[:100])
+        import html
+        row.set_title(html.escape(command[:80]))
+        row.set_subtitle(f"Type: {exec_type}")
         
-        del_btn = Gtk.Button()
+        # Details in expanded view
+        cmd_row = Adw.ActionRow()
+        cmd_row.set_title("Command")
+        cmd_row.set_subtitle(html.escape(command))
+        row.add_row(cmd_row)
+        
+        type_row = Adw.ActionRow()
+        type_row.set_title("Exec Type")
+        type_row.set_subtitle("Runs once at startup" if "once" in exec_type else "Runs every time")
+        row.add_row(type_row)
+        
+        # Buttons
+        btn_box = Gtk.Box(spacing=6)
+        
+        del_btn = Gtk.Button(label="Delete")
         del_btn.set_icon_name("user-trash-symbolic")
-        del_btn.set_valign(Gtk.Align.CENTER)
         del_btn.add_css_class("destructive-action")
         del_btn.connect('clicked', lambda b, ln=line_num: self.delete_program(ln))
-        row.add_suffix(del_btn)
+        btn_box.append(del_btn)
+        
+        row.add_action(btn_box)
         
         self.programs_list.append(row)
+        self.all_programs.append((row, f"{exec_type} {command}"))
     
     def add_program(self, button):
-        dialog = Adw.MessageDialog.new(self.get_root())
-        dialog.set_heading("Add Autostart Program")
-        dialog.set_body("Enter exec command")
+        dialog = Adw.Window()
+        dialog.set_title("Add Autostart Program")
+        dialog.set_default_size(500, 500)
+        dialog.set_transient_for(self.get_root())
+        dialog.set_modal(True)
         
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        dialog.set_content(box)
         
-        # Type selector
-        type_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        type_box.append(Gtk.Label(label="Type:"))
+        # Header
+        header = Adw.HeaderBar()
+        box.append(header)
+        
+        # Content
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.set_margin_start(18)
+        content.set_margin_end(18)
+        content.set_margin_top(18)
+        content.set_margin_bottom(18)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_child(content)
+        box.append(scroll)
+        
+        # Step 1: Choose program
+        content.append(Gtk.Label(label="<b>1. Choose a Program to Auto-start</b>", use_markup=True, xalign=0))
+        
+        prog_combo = Gtk.ComboBoxText()
+        for cmd, desc in self.COMMON_PROGRAMS:
+            prog_combo.append(cmd, desc)
+        prog_combo.append("custom", "Custom command...")
+        prog_combo.set_active(0)
+        content.append(prog_combo)
+        
+        # Custom command entry
+        custom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        custom_entry = Gtk.Entry()
+        custom_entry.set_placeholder_text("e.g., firefox")
+        custom_box.append(Gtk.Label(label="Custom Command:", xalign=0))
+        custom_box.append(custom_entry)
+        custom_box.set_visible(False)
+        content.append(custom_box)
+        
+        def on_prog_changed(combo):
+            custom_box.set_visible(combo.get_active_id() == "custom")
+        prog_combo.connect('changed', on_prog_changed)
+        
+        # Step 2: Choose when to run
+        content.append(Gtk.Label(label="<b>2. When Should It Run?</b>", use_markup=True, xalign=0))
+        
         type_combo = Gtk.ComboBoxText()
-        type_combo.append_text("exec-once")
-        type_combo.append_text("exec")
+        type_combo.append("exec-once", "Run once at startup (recommended for most programs)")
+        type_combo.append("exec", "Run every time (for scripts that need to run repeatedly)")
         type_combo.set_active(0)
-        type_box.append(type_combo)
-        box.append(type_box)
+        content.append(type_combo)
         
-        # Command entry
-        entry = Gtk.Entry()
-        entry.set_placeholder_text("e.g., waybar")
-        entry.set_width_chars(50)
-        box.append(entry)
+        # Help text
+        help_label = Gtk.Label(
+            label="Tip: Use 'exec-once' for programs like status bars, wallpaper managers, etc.\nUse 'exec' only for scripts that need to run continuously.",
+            wrap=True,
+            xalign=0
+        )
+        help_label.add_css_class("dim-label")
+        content.append(help_label)
         
-        dialog.set_extra_child(box)
+        # Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(12)
         
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("add", "Add")
-        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect('clicked', lambda b: dialog.close())
+        btn_box.append(cancel_btn)
         
-        def on_response(dlg, response):
-            if response == "add":
-                exec_type = type_combo.get_active_text()
-                command = entry.get_text()
-                if command:
-                    self.save_program(f"{exec_type} = {command}\n")
-                    self.load_programs()
+        add_btn = Gtk.Button(label="Add Program")
+        add_btn.add_css_class("suggested-action")
+        btn_box.append(add_btn)
         
-        dialog.connect('response', on_response)
+        content.append(btn_box)
+        
+        def on_add(btn):
+            exec_type = type_combo.get_active_id()
+            
+            if prog_combo.get_active_id() == "custom":
+                command = custom_entry.get_text().strip()
+            else:
+                command = prog_combo.get_active_id()
+            
+            if command:
+                self.save_program(f"{exec_type} = {command}\n")
+                self.load_programs()
+                dialog.close()
+        
+        add_btn.connect('clicked', on_add)
         dialog.present()
     
     def delete_program(self, line_num):
@@ -1576,12 +1740,29 @@ class AutostartPage(SettingsPage):
 class EnvironmentPage(SettingsPage):
     """Environment variables with list view"""
     
+    # Common environment variables with descriptions
+    COMMON_ENV_VARS = [
+        ("GDK_BACKEND", ["wayland", "x11", "wayland,x11"], "GTK rendering backend - use wayland for native Wayland apps"),
+        ("QT_QPA_PLATFORM", ["wayland", "xcb", "wayland;xcb"], "Qt platform - controls how Qt apps render"),
+        ("SDL_VIDEODRIVER", ["wayland", "x11"], "SDL video backend - for games and SDL apps"),
+        ("XCURSOR_THEME", ["Adwaita", "breeze_cursors", "Vanilla-DMZ"], "Mouse cursor theme name"),
+        ("XCURSOR_SIZE", ["24", "32", "48"], "Mouse cursor size in pixels"),
+        ("MOZ_ENABLE_WAYLAND", ["1"], "Enable Wayland for Firefox"),
+        ("QT_QPA_PLATFORMTHEME", ["qt5ct", "gtk2", "gnome"], "Qt theme integration"),
+    ]
+    
     def __init__(self):
         super().__init__("Environment", "applications-system-symbolic")
         self.hypr_dir = Path.home() / ".config" / "hypr"
         self.env_file = self.find_config_file("env.conf")
         
-        info = self.create_group("Environment Variables", "System environment configuration")
+        # Search bar
+        search_bar = Gtk.SearchEntry()
+        search_bar.set_placeholder_text("Search environment variables...")
+        search_bar.connect('search-changed', self.on_search)
+        self.append(search_bar)
+        
+        info = self.create_group("Environment Variables", "System environment configuration (requires Hyprland restart)")
         
         # Toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1590,6 +1771,7 @@ class EnvironmentPage(SettingsPage):
         
         add_btn = Gtk.Button(label="Add Variable")
         add_btn.set_icon_name("list-add-symbolic")
+        add_btn.add_css_class("suggested-action")
         add_btn.connect('clicked', self.add_env_var)
         toolbar.append(add_btn)
         
@@ -1602,8 +1784,10 @@ class EnvironmentPage(SettingsPage):
         
         # List of env vars
         self.env_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.env_list.set_margin_end(12)  # Add padding to avoid scrollbar overlap
         info.add(self.env_list)
         
+        self.all_env_vars = []
         self.load_env_vars()
     
     def find_config_file(self, filename):
@@ -1616,12 +1800,20 @@ class EnvironmentPage(SettingsPage):
                 return path
         return paths[0]
     
+    def on_search(self, entry):
+        search_text = entry.get_text().lower()
+        for row, env_data in self.all_env_vars:
+            visible = search_text in env_data.lower()
+            row.set_visible(visible)
+    
     def load_env_vars(self):
         while child := self.env_list.get_first_child():
             self.env_list.remove(child)
         
+        self.all_env_vars = []
+        
         if not self.env_file.exists():
-            label = Gtk.Label(label="No env file found")
+            label = Gtk.Label(label="No env file found. Click 'Add Variable' to create one!")
             self.env_list.append(label)
             return
         
@@ -1637,9 +1829,8 @@ class EnvironmentPage(SettingsPage):
                 self.add_env_row(line, i)
     
     def add_env_row(self, env_line, line_num):
-        row = Adw.ActionRow()
+        row = Adw.ExpanderRow()
         
-        # Parse: env = VAR,value
         parts = env_line.strip().split('=', 1)
         if len(parts) < 2:
             return
@@ -1651,48 +1842,169 @@ class EnvironmentPage(SettingsPage):
             var_name = var_parts[0].strip()
             var_value = var_parts[1].strip()
             
+            import html
             row.set_title(var_name)
-            row.set_subtitle(var_value[:80])
+            row.set_subtitle(html.escape(var_value[:80]))
             
-            del_btn = Gtk.Button()
+            # Details in expanded view
+            value_row = Adw.ActionRow()
+            value_row.set_title("Value")
+            value_row.set_subtitle(html.escape(var_value))
+            row.add_row(value_row)
+            
+            # Add description if it's a known variable
+            for env_name, values, desc in self.COMMON_ENV_VARS:
+                if env_name == var_name:
+                    desc_row = Adw.ActionRow()
+                    desc_row.set_title("Description")
+                    desc_row.set_subtitle(desc)
+                    row.add_row(desc_row)
+                    break
+            
+            # Buttons
+            btn_box = Gtk.Box(spacing=6)
+            
+            del_btn = Gtk.Button(label="Delete")
             del_btn.set_icon_name("user-trash-symbolic")
-            del_btn.set_valign(Gtk.Align.CENTER)
             del_btn.add_css_class("destructive-action")
             del_btn.connect('clicked', lambda b, ln=line_num: self.delete_env_var(ln))
-            row.add_suffix(del_btn)
+            btn_box.append(del_btn)
+            
+            row.add_action(btn_box)
             
             self.env_list.append(row)
+            self.all_env_vars.append((row, f"{var_name} {var_value}"))
     
     def add_env_var(self, button):
-        dialog = Adw.MessageDialog.new(self.get_root())
-        dialog.set_heading("Add Environment Variable")
-        dialog.set_body("Enter environment variable")
+        dialog = Adw.Window()
+        dialog.set_title("Add Environment Variable")
+        dialog.set_default_size(500, 550)
+        dialog.set_transient_for(self.get_root())
+        dialog.set_modal(True)
         
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        dialog.set_content(box)
         
-        name_entry = Gtk.Entry()
-        name_entry.set_placeholder_text("Variable name (e.g., GDK_BACKEND)")
-        box.append(name_entry)
+        # Header
+        header = Adw.HeaderBar()
+        box.append(header)
         
+        # Content
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        content.set_margin_start(18)
+        content.set_margin_end(18)
+        content.set_margin_top(18)
+        content.set_margin_bottom(18)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_vexpand(True)
+        scroll.set_child(content)
+        box.append(scroll)
+        
+        # Step 1: Choose variable
+        content.append(Gtk.Label(label="<b>1. Choose Environment Variable</b>", use_markup=True, xalign=0))
+        
+        var_combo = Gtk.ComboBoxText()
+        for var_name, values, desc in self.COMMON_ENV_VARS:
+            var_combo.append(var_name, f"{var_name} - {desc[:50]}...")
+        var_combo.append("custom", "Custom variable...")
+        var_combo.set_active(0)
+        content.append(var_combo)
+        
+        # Custom name entry
+        custom_name_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        custom_name_entry = Gtk.Entry()
+        custom_name_entry.set_placeholder_text("e.g., MY_CUSTOM_VAR")
+        custom_name_box.append(Gtk.Label(label="Variable Name:", xalign=0))
+        custom_name_box.append(custom_name_entry)
+        custom_name_box.set_visible(False)
+        content.append(custom_name_box)
+        
+        # Step 2: Choose/enter value
+        content.append(Gtk.Label(label="<b>2. Set Value</b>", use_markup=True, xalign=0))
+        
+        # Value combo (for common vars)
+        value_combo = Gtk.ComboBoxText()
+        content.append(value_combo)
+        
+        # Manual value entry
+        content.append(Gtk.Label(label="Or enter custom value:", xalign=0))
         value_entry = Gtk.Entry()
-        value_entry.set_placeholder_text("Value (e.g., wayland)")
-        box.append(value_entry)
+        value_entry.set_placeholder_text("Enter value here")
+        content.append(value_entry)
         
-        dialog.set_extra_child(box)
+        # Description label
+        desc_label = Gtk.Label(wrap=True, xalign=0)
+        desc_label.add_css_class("dim-label")
+        content.append(desc_label)
         
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("add", "Add")
-        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+        def update_value_options(combo):
+            var_id = combo.get_active_id()
+            custom_name_box.set_visible(var_id == "custom")
+            
+            # Clear value combo
+            value_combo.remove_all()
+            
+            if var_id != "custom":
+                # Find matching common var
+                for var_name, values, desc in self.COMMON_ENV_VARS:
+                    if var_name == var_id:
+                        for val in values:
+                            value_combo.append_text(val)
+                        value_combo.set_active(0)
+                        desc_label.set_text(desc)
+                        break
+            else:
+                desc_label.set_text("Enter a custom environment variable name and value")
         
-        def on_response(dlg, response):
-            if response == "add":
-                var_name = name_entry.get_text()
-                var_value = value_entry.get_text()
-                if var_name and var_value:
-                    self.save_env_var(f"env = {var_name},{var_value}\n")
-                    self.load_env_vars()
+        var_combo.connect('changed', update_value_options)
+        update_value_options(var_combo)
         
-        dialog.connect('response', on_response)
+        def on_value_selected(combo):
+            if combo.get_active_text():
+                value_entry.set_text(combo.get_active_text())
+        value_combo.connect('changed', on_value_selected)
+        
+        # Help text
+        help_label = Gtk.Label(
+            label="Note: Environment variable changes require restarting Hyprland to take effect",
+            wrap=True,
+            xalign=0
+        )
+        help_label.add_css_class("warning")
+        content.append(help_label)
+        
+        # Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(12)
+        
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect('clicked', lambda b: dialog.close())
+        btn_box.append(cancel_btn)
+        
+        add_btn = Gtk.Button(label="Add Variable")
+        add_btn.add_css_class("suggested-action")
+        btn_box.append(add_btn)
+        
+        content.append(btn_box)
+        
+        def on_add(btn):
+            # Get variable name
+            if var_combo.get_active_id() == "custom":
+                var_name = custom_name_entry.get_text().strip()
+            else:
+                var_name = var_combo.get_active_id()
+            
+            # Get value
+            var_value = value_entry.get_text().strip()
+            
+            if var_name and var_value:
+                self.save_env_var(f"env = {var_name},{var_value}\n")
+                self.load_env_vars()
+                dialog.close()
+        
+        add_btn.connect('clicked', on_add)
         dialog.present()
     
     def delete_env_var(self, line_num):
