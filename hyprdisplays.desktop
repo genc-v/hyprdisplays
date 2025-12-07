@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=HyprDisplays
+Comment=Hyprland Display Configuration Manager
+Exec=/home/roses/random/hyprdisplays/hyprdisplays.py
+Icon=video-display
+Terminal=false
+Type=Application
+Categories=Settings;System;
+Keywords=display;monitor;screen;hyprland;
