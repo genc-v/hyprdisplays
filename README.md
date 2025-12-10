@@ -16,6 +16,9 @@ Visual display configuration tool for Hyprland monitors.
 - Adjust resolution, refresh rate, position, scale, and rotation
 - Live preview and apply changes
 - Save configuration to `~/.config/hypr/monitors.conf`
+- **Auto-remember configurations** - Remembers your settings for different monitor setups
+- **Automatic switching** - Detects when monitors are connected/disconnected and applies the correct configuration
+- **Configuration history** - Keeps track of your display configurations
 
 ## ⚙️ HyprSettings - Settings Manager
 
@@ -43,11 +46,13 @@ sudo dnf install python3-gobject gtk4 libadwaita
 ## Installation
 
 ### Install Display Manager
+
 ```bash
 ./install.sh
 ```
 
 ### Install Settings Manager
+
 ```bash
 ./install_settings.sh
 ```
@@ -57,7 +62,9 @@ Both will be available in your application menu.
 ## Usage
 
 ### HyprDisplays (Display Manager)
+
 Run directly:
+
 ```bash
 ./hyprdisplays.py
 ```
@@ -65,7 +72,9 @@ Run directly:
 Or from application menu: "Hyprland Display Manager"
 
 ### HyprSettings (Settings Manager)
+
 Run directly:
+
 ```bash
 ./hyprsettings.py
 ```
@@ -88,33 +97,71 @@ Each monitor shows:
 - **Enabled**: Toggle to enable/disable the display
 - **Primary**: Set as primary monitor
 
+### Configuration Memory
+
+HyprDisplays now automatically remembers your configuration for different monitor setups:
+
+- **Automatic Detection**: When you connect or disconnect monitors, HyprDisplays detects the change
+- **Physical Monitor ID**: Uses monitor make, model, and serial to uniquely identify each monitor
+- **Same Port, Different Monitors**: HDMI-A-1 at work vs. HDMI-A-1 at home are recognized as different setups
+- **Smart Profiles**: Your configuration is saved based on which physical monitors are connected
+- **Auto-Apply**: When you reconnect a monitor setup you've used before, your saved configuration is automatically applied
+- **Configuration History**: Keeps a history of up to 50 recent configurations
+
+**How it works:**
+
+1. Configure your displays as you like them
+2. Click "Apply & Save" to save the configuration
+3. HyprDisplays identifies your monitors by their physical details (make/model/serial)
+4. Next time you connect the same physical monitors, your configuration is automatically restored
+5. Different monitor combinations (even on the same ports) get their own saved configurations
+
+**Example scenarios:**
+
+- **Laptop only**: Configure single display settings, saved automatically
+- **Laptop + work monitor (Dell on HDMI-A-1)**: Configure and save → remembers this specific monitor
+- **Laptop + home monitor (Samsung on HDMI-A-1)**: Configure and save → remembers this different monitor
+- **Desktop with 3 monitors**: Configure triple monitor setup, saved independently
+
+**Key feature**: Even if you use the same port (like HDMI-A-1) for different monitors at work and home, HyprDisplays recognizes which physical monitor is connected and applies the correct configuration!
+
+Your configurations are stored in `~/.config/hypr/hyprdisplays_profiles.json`
+
 ## HyprSettings Features
 
 Navigate through settings categories:
 
 ### General
+
 - Border size, gaps, layout options
 
-### Animations  
+### Animations
+
 - Enable/disable, speed control
 
 ### Input
+
 - Mouse sensitivity, natural scroll, tap-to-click
 - Keyboard layout and variant
 
 ### Workspaces
+
 - Edit workspace configuration directly
 
 ### Environment
+
 - Edit environment variables
 
 ### Autostart
+
 - Configure programs to launch on startup
 
 ### Rules
+
 - Window-specific rules and behavior
 
 ### Keybinds
+
 - Keyboard shortcuts configuration
 
 ## Confirmation Dialog

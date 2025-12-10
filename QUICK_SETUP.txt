@@ -1,0 +1,160 @@
+================================================================================
+                    HYPRDISPLAYS - QUICK SETUP
+================================================================================
+
+HOW TO RUN
+==========
+
+Option 1: Run Directly
+-----------------------
+cd /home/roses/random/hyprdisplays
+./hyprdisplays.py
+
+Option 2: Install System-Wide (Recommended)
+--------------------------------------------
+cd /home/roses/random/hyprdisplays
+./install.sh
+
+Then launch from application menu or run: hyprdisplays
+
+
+IMPORTANT: AUTOMATIC DETECTION
+===============================
+
+The automatic monitor detection ONLY works while HyprDisplays is RUNNING!
+
+✓ App running → Auto-detects monitor changes every 3 seconds
+✗ App closed → No automatic detection
+
+Two ways to use:
+
+1. Keep it running in background (recommended for frequent changes):
+   ./hyprdisplays.py &
+   (Then minimize the window)
+
+2. Open when needed (for occasional changes):
+   Open app → Let it auto-apply → Close when done
+
+
+FIRST TIME SETUP
+=================
+
+Step 1: Configure Laptop Only
+------------------------------
+1. Disconnect all external monitors
+2. Run: ./hyprdisplays.py
+3. Configure laptop display
+4. Click "Apply & Save"
+5. Close
+
+Step 2: Configure Work Monitor
+-------------------------------
+1. Connect work monitor (e.g., Dell on HDMI)
+2. Run: ./hyprdisplays.py
+3. Arrange monitors, set resolution, scale, etc.
+4. Click "Apply & Save"
+5. See message: "Config saved for 2 monitor(s) - Will auto-load on reconnect!"
+6. Close
+
+Step 3: Configure Home Monitor
+-------------------------------
+1. Disconnect work monitor
+2. Connect home monitor (e.g., Samsung on HDMI)
+3. Run: ./hyprdisplays.py
+4. Arrange monitors for home
+5. Click "Apply & Save"
+6. Close
+
+
+TESTING AUTOMATIC SWITCHING
+============================
+
+With HyprDisplays Running:
+--------------------------
+./hyprdisplays.py
+(Keep window open/minimized)
+
+Then test:
+→ Unplug monitor → Auto-switches to laptop config
+→ Plug work monitor → Auto-loads work config  
+→ Unplug, plug home monitor → Auto-loads home config
+
+Watch status bar for: "Auto-applied saved config for X monitor(s)"
+
+
+RUN AT STARTUP (Optional but Recommended)
+==========================================
+
+Add to ~/.config/hypr/hyprland.conf:
+
+exec-once = hyprdisplays
+
+This will:
+✓ Start HyprDisplays when Hyprland starts
+✓ Monitor for display changes automatically
+✓ Apply saved configs when monitors connect/disconnect
+
+
+WHERE ARE CONFIGS SAVED?
+=========================
+
+~/.config/hypr/monitors.conf              ← Current active config
+~/.config/hypr/hyprdisplays_profiles.json ← All saved profiles
+
+View your profiles:
+cat ~/.config/hypr/hyprdisplays_profiles.json | python3 -m json.tool
+
+
+TROUBLESHOOTING
+===============
+
+Config not auto-loading?
+-------------------------
+1. Check if HyprDisplays is running:
+   ps aux | grep hyprdisplays
+   
+2. If not running, start it:
+   ./hyprdisplays.py &
+
+3. Make sure you saved config with "Apply & Save"
+
+4. Check status bar shows: "Saved config available"
+
+
+SIMPLE WORKFLOW
+===============
+
+One-time setup:
+  ./install.sh
+  Configure each monitor setup with "Apply & Save"
+  Add "exec-once = hyprdisplays" to hyprland.conf
+
+Daily use:
+  Just connect/disconnect monitors - it works automatically!
+
+
+EXAMPLE: WORK & HOME LAPTOP USER
+=================================
+
+Setup (once):
+  Laptop only → configure → save
+  Work monitor → configure → save  
+  Home monitor → configure → save
+
+Daily:
+  Morning: Laptop only (auto-configured)
+  At work: Plug in Dell monitor → Auto-loads work config
+  At home: Plug in Samsung monitor → Auto-loads home config
+  No manual steps needed!
+
+
+KEY POINTS
+==========
+
+✓ App must be running for automatic detection
+✓ Configure each setup once with "Apply & Save"
+✓ Same port, different monitors = different configs (work vs home)
+✓ Recommended: Add to Hyprland startup
+✓ Zero manual intervention after setup
+
+================================================================================

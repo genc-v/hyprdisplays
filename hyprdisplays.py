@@ -8,6 +8,132 @@ import json
 import subprocess
 import os
 from pathlib import Path
+from datetime import datetime
+import hashlib
+
+class ConfigurationManager:
+    """Manages saved monitor configurations based on connected monitors"""
+    def __init__(self):
+        self.config_dir = Path.home() / ".config" / "hypr"
+        self.profiles_path = self.config_dir / "hyprdisplays_profiles.json"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.profiles = self.load_profiles()
+    
+    def load_profiles(self):
+        """Load saved monitor profiles"""
+        if self.profiles_path.exists():
+            try:
+                with open(self.profiles_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error loading profiles: {e}")
+                return {"profiles": {}, "history": []}
+        return {"profiles": {}, "history": []}
+    
+    def save_profiles(self):
+        """Save monitor profiles to disk"""
+        try:
+            with open(self.profiles_path, 'w') as f:
+                json.dump(self.profiles, f, indent=2)
+        except Exception as e:
+            print(f"Error saving profiles: {e}")
+    
+    def get_monitor_fingerprint(self, monitors_info):
+        """Create a unique fingerprint for a set of monitors
+        
+        Args:
+            monitors_info: List of dicts with keys: name, make, model, serial
+        
+        Returns:
+            String fingerprint that uniquely identifies this monitor setup
+        """
+        # Create detailed identifier for each monitor
+        monitor_ids = []
+        for monitor in monitors_info:
+            # Use make, model, serial to uniquely identify the physical monitor
+            # Fall back to name if details not available
+            make = monitor.get('make', '').strip()
+            model = monitor.get('model', '').strip()
+            serial = monitor.get('serial', '').strip()
+            name = monitor.get('name', 'unknown')
+            
+            # Create identifier: name|make|model|serial
+            # This allows differentiating between same connector but different physical monitors
+            if make or model or serial:
+                # Use detailed info if available
+                monitor_id = f"{name}|{make}|{model}|{serial}"
+            else:
+                # Fall back to just name (for monitors without detailed info)
+                monitor_id = name
+            
+            monitor_ids.append(monitor_id)
+        
+        # Sort to ensure consistency regardless of detection order
+        sorted_ids = sorted(monitor_ids)
+        fingerprint = ";;".join(sorted_ids)
+        return fingerprint
+    
+    def save_configuration(self, monitors_info, monitor_configs):
+        """Save current configuration for this monitor setup
+        
+        Args:
+            monitors_info: List of dicts with monitor details (name, make, model, serial)
+            monitor_configs: Dict mapping monitor names to their configurations
+        """
+        fingerprint = self.get_monitor_fingerprint(monitors_info)
+        
+        # Prepare config data
+        config_data = {
+            "monitors": monitor_configs,
+            "saved_at": datetime.now().isoformat(),
+            "monitors_info": monitors_info  # Save the full monitor details
+        }
+        
+        # Save to profiles
+        self.profiles["profiles"][fingerprint] = config_data
+        
+        # Add to history
+        history_entry = {
+            "fingerprint": fingerprint,
+            "monitors_info": monitors_info,
+            "saved_at": config_data["saved_at"]
+        }
+        
+        if "history" not in self.profiles:
+            self.profiles["history"] = []
+        
+        # Keep only last 50 history entries
+        self.profiles["history"].insert(0, history_entry)
+        self.profiles["history"] = self.profiles["history"][:50]
+        
+        self.save_profiles()
+        print(f"Saved configuration for fingerprint: {fingerprint}")
+        print(f"  Monitors: {[m.get('name') for m in monitors_info]}")
+        return fingerprint
+    
+    def load_configuration(self, monitors_info):
+        """Load saved configuration for this monitor setup
+        
+        Args:
+            monitors_info: List of dicts with monitor details (name, make, model, serial)
+        
+        Returns:
+            Dict of monitor configurations if found, None otherwise
+        """
+        fingerprint = self.get_monitor_fingerprint(monitors_info)
+        
+        if fingerprint in self.profiles.get("profiles", {}):
+            config = self.profiles["profiles"][fingerprint]
+            print(f"Found saved configuration for fingerprint: {fingerprint}")
+            print(f"  Saved at: {config.get('saved_at', 'unknown')}")
+            return config.get("monitors", {})
+        
+        print(f"No saved configuration found for fingerprint: {fingerprint}")
+        return None
+    
+    def get_history(self, limit=10):
+        """Get configuration history"""
+        return self.profiles.get("history", [])[:limit]
 
 class DisplayConfig:
     def __init__(self, data):
@@ -722,6 +848,12 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title="Hyprland Display Manager")
         self.set_default_size(900, 700)
         
+        # Initialize configuration manager
+        self.config_manager = ConfigurationManager()
+        
+        # Track last monitor setup for auto-detection
+        self.last_monitor_fingerprint = None
+        
         # Main box
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.set_content(main_box)
@@ -807,6 +939,77 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         
         self.monitor_rows = []
         self.load_displays()
+        
+        # Start monitoring for display changes (every 3 seconds)
+        GLib.timeout_add_seconds(3, self.check_monitor_changes)
+    
+    def check_monitor_changes(self):
+        """Check if monitors have been connected/disconnected"""
+        try:
+            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+                                    capture_output=True, text=True, check=True)
+            displays_data = json.loads(result.stdout)
+            
+            # Extract monitor info with details for fingerprinting
+            monitors_info = []
+            for d in displays_data:
+                monitors_info.append({
+                    'name': d.get('name'),
+                    'make': d.get('make', ''),
+                    'model': d.get('model', ''),
+                    'serial': d.get('serial', '')
+                })
+            
+            # Get current fingerprint
+            current_fingerprint = self.config_manager.get_monitor_fingerprint(monitors_info)
+            
+            # Check if setup has changed
+            if current_fingerprint != self.last_monitor_fingerprint:
+                print(f"Monitor setup changed: {self.last_monitor_fingerprint} -> {current_fingerprint}")
+                self.last_monitor_fingerprint = current_fingerprint
+                
+                # Try to load saved configuration for this setup
+                saved_config = self.config_manager.load_configuration(monitors_info)
+                if saved_config:
+                    print("Applying saved configuration for this monitor setup...")
+                    self.apply_saved_configuration(saved_config, displays_data)
+                    self.status_label.set_text(f"Auto-applied saved config for {len(monitors_info)} monitor(s)")
+                else:
+                    print("No saved configuration found, keeping current")
+                    self.load_displays()
+        except Exception as e:
+            print(f"Error checking monitor changes: {e}")
+        
+        return True  # Continue checking
+    
+    def apply_saved_configuration(self, saved_config, displays_data):
+        """Apply a saved configuration to the displays"""
+        try:
+            # Apply via hyprctl first
+            for monitor_name, config in saved_config.items():
+                # Build monitor config line
+                if config.get('disabled'):
+                    cmd = f"{monitor_name},disabled"
+                else:
+                    resolution = config.get('resolution', f"{config.get('width')}x{config.get('height')}")
+                    refresh = config.get('refresh_rate', 60)
+                    x = config.get('x', 0)
+                    y = config.get('y', 0)
+                    scale = config.get('scale', 1.0)
+                    transform = config.get('transform', 0)
+                    
+                    cmd = f"{monitor_name},{resolution}@{refresh},{x}x{y},{scale},transform,{transform}"
+                
+                print(f"Applying saved config: monitor={cmd}")
+                subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
+                             capture_output=True, text=True, check=False)
+            
+            # Reload display to update UI
+            GLib.timeout_add(500, lambda: self.load_displays())
+            
+        except Exception as e:
+            print(f"Error applying saved configuration: {e}")
+            self.status_label.set_text(f"Error applying saved config: {e}")
     
     def load_displays(self):
         """Load current display configuration from Hyprland"""
@@ -814,6 +1017,19 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
             result = subprocess.run(['hyprctl', 'monitors', '-j'], 
                                     capture_output=True, text=True, check=True)
             displays_data = json.loads(result.stdout)
+            
+            # Extract monitor info with details for fingerprinting
+            monitors_info = []
+            for d in displays_data:
+                monitors_info.append({
+                    'name': d.get('name'),
+                    'make': d.get('make', ''),
+                    'model': d.get('model', ''),
+                    'serial': d.get('serial', '')
+                })
+            
+            # Update fingerprint
+            self.last_monitor_fingerprint = self.config_manager.get_monitor_fingerprint(monitors_info)
             
             # Clear existing
             while self.content_box.get_first_child():
@@ -836,7 +1052,14 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                 self.content_box.append(row)
             
             self.canvas.queue_draw()
-            self.status_label.set_text(f"Loaded {len(displays_data)} display(s)")
+            
+            # Check if we have a saved config for this setup
+            saved_config = self.config_manager.load_configuration(monitors_info)
+            if saved_config:
+                status_msg = f"Loaded {len(displays_data)} display(s) - Saved config available"
+            else:
+                status_msg = f"Loaded {len(displays_data)} display(s)"
+            self.status_label.set_text(status_msg)
         except Exception as e:
             self.status_label.set_text(f"Error loading displays: {e}")
     
@@ -1074,19 +1297,63 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         dialog.present()
     
     def save_config_permanently(self):
-        """Save configuration to Hyprland config file"""
+        """Save configuration to Hyprland config file and profile"""
         hypr_dir = Path.home() / ".config" / "hypr"
         config_path = hypr_dir / "hyprland.conf"
         monitors_conf_path = hypr_dir / "monitors.conf"
         
         try:
-            # Generate monitor lines first
+            # Get current monitor details from Hyprland
+            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+                                  capture_output=True, text=True, check=True)
+            displays_data = json.loads(result.stdout)
+            
+            # Extract monitor info with details for fingerprinting
+            monitors_info = []
+            for d in displays_data:
+                monitors_info.append({
+                    'name': d.get('name'),
+                    'make': d.get('make', ''),
+                    'model': d.get('model', ''),
+                    'serial': d.get('serial', '')
+                })
+            
+            # Generate monitor lines and configuration data
             monitor_lines = []
+            monitor_configs = {}
+            
             for row in self.monitor_rows:
                 config_line = row.get_config_line()
                 monitor_lines.append(config_line + '\n')
+                
+                # Store configuration data for profile
+                mode_text = row.mode_combo.get_active_text()
+                if mode_text:
+                    parts = mode_text.replace("Hz", "").split("@")
+                    resolution = parts[0]
+                    refresh = float(parts[1]) if len(parts) > 1 else row.display.refresh_rate
+                else:
+                    resolution = f"{row.display.width}x{row.display.height}"
+                    refresh = row.display.refresh_rate
+                
+                monitor_configs[row.display.name] = {
+                    'resolution': resolution,
+                    'refresh_rate': refresh,
+                    'x': int(row.x_spin.get_value()),
+                    'y': int(row.y_spin.get_value()),
+                    'scale': row.scale_spin.get_value(),
+                    'transform': row.transform_combo.get_active(),
+                    'disabled': not row.enabled_check.get_active(),
+                    'focused': row.display.focused,
+                    'width': row.display.width,
+                    'height': row.display.height
+                }
+                
                 # Debug: print what we're saving
                 print(f"Saving: {config_line}")
+            
+            # Save to profile system with monitor details
+            fingerprint = self.config_manager.save_configuration(monitors_info, monitor_configs)
             
             # Strategy: Save to monitors.conf which is typically sourced last
             # This ensures our settings override any earlier monitor configs
@@ -1095,6 +1362,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                 "# Monitor configuration - Generated by HyprDisplays\n",
                 "# This file is automatically managed by HyprDisplays.\n",
                 "# Manual changes may be overwritten.\n",
+                f"# Profile: {fingerprint[:60]}...\n",  # Truncate long fingerprints
+                f"# Saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n",
                 "\n"
             ] + monitor_lines
             
@@ -1167,7 +1436,7 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                 if result.returncode != 0:
                     print(f"Warning: Failed to apply monitor config: {result.stderr}")
             
-            self.status_label.set_text(f"Configuration saved to monitors.conf and applied!")
+            self.status_label.set_text(f"Config saved for {len(monitors_info)} monitor(s) - Will auto-load on reconnect!")
         except Exception as e:
             import traceback
             traceback.print_exc()
