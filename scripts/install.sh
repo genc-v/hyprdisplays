@@ -1,6 +1,10 @@
 #!/bin/bash
 # Install script for HyprDisplays
 
+# Get the script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
 INSTALL_DIR="$HOME/.local/share/hyprdisplays"
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
@@ -16,19 +20,19 @@ mkdir -p "$SYSTEMD_DIR"
 
 # Copy application files
 echo "  → Installing GUI application..."
-cp hyprdisplays.py "$INSTALL_DIR/"
+cp "$PROJECT_ROOT/src/hyprdisplays.py" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/hyprdisplays.py"
 
 # Copy daemon
 echo "  → Installing background daemon..."
-cp hyprdisplays-daemon.py "$INSTALL_DIR/"
+cp "$PROJECT_ROOT/src/hyprdisplays-daemon.py" "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/hyprdisplays-daemon.py"
 
 # Copy icon
-cp logo.png "$ICON_DIR/hyprdisplays.png"
+cp "$PROJECT_ROOT/assets/logo.png" "$ICON_DIR/hyprdisplays.png"
 
 # Update desktop file with correct path
-sed "s|/home/roses/random/hyprdisplays|$INSTALL_DIR|g" hyprdisplays.desktop > "$DESKTOP_DIR/hyprdisplays.desktop"
+sed "s|Exec=.*hyprdisplays.py|Exec=$INSTALL_DIR/hyprdisplays.py|g" "$PROJECT_ROOT/desktop/hyprdisplays.desktop" > "$DESKTOP_DIR/hyprdisplays.desktop"
 chmod +x "$DESKTOP_DIR/hyprdisplays.desktop"
 
 # Install systemd service for background daemon

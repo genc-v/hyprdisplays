@@ -4,10 +4,22 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+INSTALL_DIR="$HOME/.local/share/hyprdisplays"
+
 echo "Installing HyprDisplays Daemon..."
 
-# Create systemd user directory if it doesn't exist
+# Create directories
 mkdir -p ~/.config/systemd/user
+mkdir -p "$INSTALL_DIR"
+
+# Copy daemon if not already installed
+if [ ! -f "$INSTALL_DIR/hyprdisplays-daemon.py" ]; then
+    cp "$PROJECT_ROOT/src/hyprdisplays-daemon.py" "$INSTALL_DIR/"
+    chmod +x "$INSTALL_DIR/hyprdisplays-daemon.py"
+    echo "✓ Daemon installed"
+fi
 
 # Create systemd service file
 cat > ~/.config/systemd/user/hyprdisplays-daemon.service << EOF
@@ -17,7 +29,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=$(pwd)/hyprdisplays-daemon.py
+ExecStart=$INSTALL_DIR/hyprdisplays-daemon.py
 Restart=on-failure
 RestartSec=5
 

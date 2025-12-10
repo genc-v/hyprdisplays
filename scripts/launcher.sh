@@ -3,6 +3,7 @@
 # Hyprland GUI Tools Launcher
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "╔════════════════════════════════════════╗"
 echo "║     Hyprland GUI Tools                 ║"
@@ -20,11 +21,11 @@ read -p "Enter choice [1-4]: " choice
 case $choice in
     1)
         echo "Launching HyprDisplays..."
-        "$SCRIPT_DIR/hyprdisplays.py"
+        "$PROJECT_ROOT/src/hyprdisplays.py"
         ;;
     2)
         echo "Launching HyprSettings..."
-        "$SCRIPT_DIR/hyprsettings.py"
+        "$PROJECT_ROOT/src/hyprsettings.py"
         ;;
     3)
         echo "Installing both applications..."
