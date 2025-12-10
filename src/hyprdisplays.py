@@ -940,8 +940,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         self.monitor_rows = []
         self.load_displays()
         
-        # Start monitoring for display changes (every 3 seconds)
-        GLib.timeout_add_seconds(3, self.check_monitor_changes)
+        # Start monitoring for display changes (every 1 second)
+        GLib.timeout_add_seconds(1, self.check_monitor_changes)
     
     def check_monitor_changes(self):
         """Check if monitors have been connected/disconnected"""

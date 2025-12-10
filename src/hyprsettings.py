@@ -707,7 +707,7 @@ class MasterLayoutPage(SettingsPage):
             "Drop windows at cursor position",
             "master:drop_at_cursor"
         ))
-
+^
 
 class KeybindsPage(SettingsPage):
     """Keybinds configuration with easy-to-use interface"""
