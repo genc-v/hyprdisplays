@@ -41,7 +41,3 @@ hyprsettings
 - Usage and setup: `docs/README.md`
 - Config file map: `docs/CONFIGURATION.md`
 - Daemon, systemd, CLI: `docs/ADVANCED.md`
-
-## License
-
-MIT
