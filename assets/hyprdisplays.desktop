@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=HyprDisplays
 Comment=Hyprland Display Configuration Manager
-Exec=/home/roses/random/hyprdisplays/hyprdisplays.py
+Exec=hyprdisplays.py
 Icon=hyprdisplays
 Terminal=false
 Type=Application
