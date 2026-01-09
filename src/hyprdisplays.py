@@ -140,16 +140,46 @@ class DisplayConfig:
         self.id = data.get('id')
         self.name = data.get('name')
         self.description = data.get('description', '')
-        self.width = data.get('width')
-        self.height = data.get('height')
-        self.refresh_rate = data.get('refreshRate')
-        self.x = data.get('x')
-        self.y = data.get('y')
-        self.scale = data.get('scale')
-        self.transform = data.get('transform')
         self.disabled = data.get('disabled', False)
         self.available_modes = data.get('availableModes', [])
         self.focused = data.get('focused', False)  # Primary/focused monitor
+
+        # Handle dimensions (might be 0/missing if disabled)
+        self.width = data.get('width', 0)
+        self.height = data.get('height', 0)
+        self.refresh_rate = data.get('refreshRate', 60.0)
+        
+        # Heuristics for disabled monitors: use largest available mode or default
+        if (self.disabled or self.width == 0 or self.height == 0) and self.available_modes:
+            try:
+                # Find best mode (usually first or one with highest resolution)
+                # Parse first mode as default
+                best_mode = self.available_modes[0]
+                # Try to find the 'preferred' mode if possible? 
+                # Hyprland usually returns preferred as first or implicit.
+                
+                parts = best_mode.replace('Hz', '').split('@')
+                res_parts = parts[0].split('x')
+                self.width = int(res_parts[0])
+                self.height = int(res_parts[1])
+                if len(parts) > 1:
+                    self.refresh_rate = float(parts[1])
+            except:
+                self.width = 1920
+                self.height = 1080
+        elif self.disabled and self.width == 0:
+             # Fallback if no modes available (unlikely for connected display)
+             self.width = 1920
+             self.height = 1080
+             
+        self.x = data.get('x', 0)
+        self.y = data.get('y', 0)
+        self.scale = data.get('scale', 1.0)
+        self.transform = data.get('transform', 0)
+        
+        # Capability flags (best effort detection)
+        self.is_10bit = data.get('10bit', False)
+        self.vrr_enabled = data.get('vrr', False)
 
 class MonitorRow(Gtk.Box):
     def __init__(self, display, on_change, on_primary_change):
@@ -186,37 +216,66 @@ class MonitorRow(Gtk.Box):
         
         self.append(header_box)
         
-        # Resolution and refresh rate
-        mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        mode_box.append(Gtk.Label(label="Mode:"))
-        
-        self.mode_combo = Gtk.ComboBoxText()
-        
-        # Find and select the current mode
-        current_index = -1
-        for i, mode in enumerate(display.available_modes):
-            self.mode_combo.append_text(mode)
+        # Parse available modes into a dictionary {resolution: [refresh_rates]}
+        self.modes_map = {}
+        for mode in display.available_modes:
             if '@' in mode and 'x' in mode:
                 try:
                     parts = mode.replace('Hz', '').split('@')
                     res = parts[0]
                     refresh = float(parts[1])
-                    expected_res = f"{display.width}x{display.height}"
-                    # Match if resolution is same and refresh rate is very close (within 0.5Hz)
-                    if res == expected_res and abs(refresh - display.refresh_rate) < 0.5:
-                        current_index = i
+                    if res not in self.modes_map:
+                        self.modes_map[res] = []
+                    if refresh not in self.modes_map[res]:
+                        self.modes_map[res].append(refresh)
                 except:
                     pass
         
-        # Set the active mode
-        if current_index >= 0:
-            self.mode_combo.set_active(current_index)
-        elif len(display.available_modes) > 0:
-            self.mode_combo.set_active(0)
+        # Sort resolutions (simple sort, maybe improve later to sort by area)
+        # Helper to sort specific resolutions by area
+        def sort_res(res_str):
+            try:
+                w, h = map(int, res_str.split('x'))
+                return w * h
+            except:
+                return 0
+                
+        self.sorted_resolutions = sorted(self.modes_map.keys(), key=sort_res, reverse=True)
         
-        self.mode_combo.connect('changed', self.on_mode_changed)
-        mode_box.append(self.mode_combo)
-        self.append(mode_box)
+        # Resolution
+        res_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        res_box.append(Gtk.Label(label="Resolution:"))
+        
+        self.res_combo = Gtk.ComboBoxText()
+        for res in self.sorted_resolutions:
+            self.res_combo.append_text(res)
+            
+        # Find current resolution
+        current_res = f"{display.width}x{display.height}"
+        if current_res in self.modes_map:
+            self.res_combo.set_active_id(current_res) # ComboBoxText doesn't support active id if not set with it?
+            # Find index
+            for i, res in enumerate(self.sorted_resolutions):
+                if res == current_res:
+                    self.res_combo.set_active(i)
+                    break
+        elif len(self.sorted_resolutions) > 0:
+            self.res_combo.set_active(0)
+            
+        self.res_combo.connect('changed', self.on_res_changed)
+        res_box.append(self.res_combo)
+        self.append(res_box)
+
+        # Refresh Rate
+        rate_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        rate_box.append(Gtk.Label(label="Refresh Rate:"))
+        
+        self.rate_combo = Gtk.ComboBoxText()
+        self.update_rates_for_current_res() # Helper to populate rates
+        
+        self.rate_combo.connect('changed', self.on_rate_changed)
+        rate_box.append(self.rate_combo)
+        self.append(rate_box)
         
         # Store position internally (not editable by user directly)
         self.x_spin = Gtk.SpinButton()
@@ -248,9 +307,36 @@ class MonitorRow(Gtk.Box):
         self.transform_combo.set_active(display.transform if display.transform < 4 else 0)
         self.transform_combo.connect('changed', self.on_setting_changed)
         transform_box.append(self.transform_combo)
+
+        self.append(transform_box)
+        
+        # Advanced settings (HDR, VRR)
+        advanced_expander = Gtk.Expander(label="Advanced Settings (HDR/VRR)")
+        advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        advanced_box.set_margin_top(6)
+        advanced_box.set_margin_bottom(6)
+        advanced_box.set_margin_start(12)
+        advanced_expander.set_child(advanced_box)
+        
+        # HDR (High Dynamic Range) - sets bitdepth to 10
+        self.hdr_check = Gtk.CheckButton(label="HDR (10-bit color)")
+        if display.is_10bit:
+            self.hdr_check.set_active(True)
+        self.hdr_check.connect('toggled', self.on_setting_changed)
+        advanced_box.append(self.hdr_check)
+        
+        # VRR (Variable Refresh Rate)
+        self.vrr_check = Gtk.CheckButton(label="VRR (Adaptive Sync)")
+        if display.vrr_enabled:
+            self.vrr_check.set_active(True)
+        self.vrr_check.connect('toggled', self.on_setting_changed)
+        advanced_box.append(self.vrr_check)
+
+        self.append(advanced_expander)
         
         # Disabled toggle
         self.enabled_check = Gtk.CheckButton(label="Enabled")
+
         self.enabled_check.set_active(not display.disabled)
         self.enabled_check.connect('toggled', self.on_setting_changed)
         transform_box.append(self.enabled_check)
@@ -271,7 +357,45 @@ class MonitorRow(Gtk.Box):
         self.display.focused = is_primary
         self.primary_button.set_active(is_primary)
     
-    def on_mode_changed(self, combo):
+    def update_rates_for_current_res(self):
+        self.rate_combo.remove_all()
+        current_res = self.res_combo.get_active_text()
+        if not current_res or current_res not in self.modes_map:
+            # Fallback
+            self.rate_combo.append_text(f"{self.display.refresh_rate}Hz")
+            self.rate_combo.set_active(0)
+            return
+            
+        rates = sorted(self.modes_map[current_res], reverse=True)
+        for rate in rates:
+            self.rate_combo.append_text(f"{rate}Hz")
+            
+        # Try to select current refresh rate
+        current_rate_str = f"{self.display.refresh_rate}Hz"
+        selected = False
+        
+        # Check if we should select based on current display state (if matching res)
+        if f"{self.display.width}x{self.display.height}" == current_res:
+            # Find closest
+            best_rate = None
+            min_diff = 1000
+            for i, rate in enumerate(rates):
+                diff = abs(rate - self.display.refresh_rate)
+                if diff < min_diff:
+                    min_diff = diff
+                    best_rate = i
+            if best_rate is not None and min_diff < 1.0:
+                 self.rate_combo.set_active(best_rate)
+                 selected = True
+        
+        if not selected and len(rates) > 0:
+            self.rate_combo.set_active(0)
+
+    def on_res_changed(self, combo):
+        self.update_rates_for_current_res()
+        self.on_change()
+
+    def on_rate_changed(self, combo):
         self.on_change()
     
     def on_setting_changed(self, widget):
@@ -283,14 +407,16 @@ class MonitorRow(Gtk.Box):
     
     def get_config_line(self):
         """Generate Hyprland config line for this monitor"""
-        mode_text = self.mode_combo.get_active_text()
-        if not mode_text:
-            mode_text = f"{self.display.width}x{self.display.height}@{self.display.refresh_rate:.2f}"
+        resolution = self.res_combo.get_active_text()
+        rate_text = self.rate_combo.get_active_text()
         
-        # Parse mode
-        parts = mode_text.replace("Hz", "").split("@")
-        resolution = parts[0]
-        refresh = parts[1] if len(parts) > 1 else str(self.display.refresh_rate)
+        if not resolution:
+             resolution = f"{self.display.width}x{self.display.height}"
+        
+        if not rate_text:
+             refresh = f"{self.display.refresh_rate:.2f}"
+        else:
+             refresh = rate_text.replace("Hz", "")
         
         x = int(self.x_spin.get_value())
         y = int(self.y_spin.get_value())
@@ -303,7 +429,17 @@ class MonitorRow(Gtk.Box):
         if not self.enabled_check.get_active():
             return f"monitor={self.display.name},disabled"
         
-        return f"monitor={self.display.name},{resolution}@{refresh},{x}x{y},{scale},transform,{transform}"
+        config_line = f"monitor={self.display.name},{resolution}@{refresh},{x}x{y},{scale},transform,{transform}"
+        
+        # Add bitdepth if HDR is enabled
+        if self.hdr_check.get_active():
+             config_line += ",bitdepth,10"
+             
+        # Add vrr if enabled
+        if self.vrr_check.get_active():
+             config_line += ",vrr,1"
+             
+        return config_line
 
 class DisplayCanvas(Gtk.DrawingArea):
     def __init__(self, get_monitors_func, on_position_changed):
@@ -348,6 +484,10 @@ class DisplayCanvas(Gtk.DrawingArea):
         self.min_zoom = 0.3
         self.max_zoom = 3.0
         self.snap_distance = 20  # Pixels in real monitor coordinates
+        
+        # Internal drag state for smooth rendering (raw monitor coordinates)
+        self.cur_drag_x = 0
+        self.cur_drag_y = 0
     
     def get_monitor_data(self):
         """Get current monitor positions and sizes from widgets"""
@@ -357,8 +497,14 @@ class DisplayCanvas(Gtk.DrawingArea):
         
         monitor_data = []
         for row in monitors:
-            current_x = int(row.x_spin.get_value())
-            current_y = int(row.y_spin.get_value())
+            # Use current drag position for the monitor being dragged just for drawing/logic
+            if row == self.dragging_monitor:
+                 current_x = self.cur_drag_x
+                 current_y = self.cur_drag_y
+            else:
+                 current_x = int(row.x_spin.get_value())
+                 current_y = int(row.y_spin.get_value())
+                 
             current_scale = row.scale_spin.get_value()
             current_transform = row.transform_combo.get_active()
             
@@ -680,6 +826,11 @@ class DisplayCanvas(Gtk.DrawingArea):
             self.dragging_monitor = monitor
             self.drag_start_monitor_x = int(monitor.x_spin.get_value())
             self.drag_start_monitor_y = int(monitor.y_spin.get_value())
+            
+            # Initialize drag coordinates (used for visual rendering)
+            self.cur_drag_x = self.drag_start_monitor_x
+            self.cur_drag_y = self.drag_start_monitor_y
+            
             self.queue_draw()
     
     def check_overlap(self, x, y, width, height, monitor, all_monitors):
@@ -794,7 +945,7 @@ class DisplayCanvas(Gtk.DrawingArea):
         return best_x, best_y
     
     def on_drag_update(self, gesture, offset_x, offset_y):
-        """Handle drag update - move monitor with automatic snapping"""
+        """Handle drag update - move monitor with visual magnetic snapping"""
         if not self.dragging_monitor:
             return
         
@@ -802,15 +953,15 @@ class DisplayCanvas(Gtk.DrawingArea):
         delta_canvas_x = offset_x
         delta_canvas_y = offset_y
         
-        # Convert delta to monitor coordinates
+        # Convert delta to monitor coordinates (raw movement)
         delta_monitor_x = delta_canvas_x / self.scale_factor
         delta_monitor_y = delta_canvas_y / self.scale_factor
         
-        # Apply delta to starting position
-        new_x = self.drag_start_monitor_x + delta_monitor_x
-        new_y = self.drag_start_monitor_y + delta_monitor_y
+        # Raw new position
+        raw_x = self.drag_start_monitor_x + delta_monitor_x
+        raw_y = self.drag_start_monitor_y + delta_monitor_y
         
-        # Get monitor data
+        # Get monitor dimensions from data
         monitor_data = self.get_monitor_data()
         dragged_data = None
         for m in monitor_data:
@@ -819,29 +970,142 @@ class DisplayCanvas(Gtk.DrawingArea):
                 break
         
         if dragged_data:
-            # Snap during drag to prevent gaps
-            snapped_x, snapped_y = self.find_snap_position(
+            # Check for magnetic snap opportunities (loose snapping)
+            snap_x, snap_y = self.find_magnetic_snap(
                 self.dragging_monitor,
-                new_x, new_y,
+                raw_x, raw_y,
                 dragged_data['width'], dragged_data['height'],
                 monitor_data
             )
             
-            # Update position with snapping
-            self.dragging_monitor.x_spin.set_value(int(round(snapped_x)))
-            self.dragging_monitor.y_spin.set_value(int(round(snapped_y)))
-        
+            # If a snap was found (not None), use it. Otherwise use raw.
+            self.cur_drag_x = snap_x if snap_x is not None else raw_x
+            self.cur_drag_y = snap_y if snap_y is not None else raw_y
+            
         self.queue_draw()
+
+    def find_magnetic_snap(self, monitor, x, y, width, height, all_monitors):
+        """Find a magnetic snap position if close to an edge, otherwise return None"""
+        # Range in monitor coordinates to snap
+        snap_threshold = 40 / self.scale_factor # 40 visual pixels range
+        snap_threshold = min(100, max(20, snap_threshold)) # Clamp to reasoanble monitor pixel range
+        
+        best_x, best_y = None, None
+        min_distance = float('inf')
+
+        for other in all_monitors:
+            if other['row'] == monitor or not other['enabled']:
+                continue
+            
+            snap_configs = [
+                # Edge snaps
+                {'x': other['x'] + other['width'], 'y': y,     'type': 'x'},
+                {'x': other['x'] - width,          'y': y,     'type': 'x'},
+                {'x': x, 'y': other['y'] + other['height'],    'type': 'y'},
+                {'x': x, 'y': other['y'] - height,             'type': 'y'},
+            ]
+            
+            for snap in snap_configs:
+                # Calculate alignment for the other axis
+                prop_x, prop_y = snap['x'], snap['y']
+                
+                # Check distance to this snap edge
+                dist_x = abs(prop_x - x)
+                dist_y = abs(prop_y - y)
+                
+                # If snapping X edge (vertical edges touching)
+                if snap['type'] == 'x' and dist_x < snap_threshold:
+                    # Check for Y alignments (top-top, bottom-bottom, center)
+                    alignments = [
+                         other['y'], 
+                         other['y'] + other['height'] - height,
+                         other['y'] + other['height']/2 - height/2
+                    ]
+                    
+                    # Find closest Y alignment
+                    best_align_y = y
+                    closest_align_dist = snap_threshold
+                    for ay in alignments:
+                        if abs(ay - y) < closest_align_dist:
+                            best_align_y = ay
+                            closest_align_dist = abs(ay - y)
+
+                    # Only valid if we don't overlap others (excluding the one we snapped to is complicated,
+                    # just check general overlap at this new position)
+                    if not self.check_overlap(prop_x, best_align_y, width, height, monitor, all_monitors):
+                        total_dist = dist_x + closest_align_dist
+                        if total_dist < min_distance:
+                            min_distance = total_dist
+                            best_x, best_y = prop_x, best_align_y
+                            
+                # If snapping Y edge (horizontal edges touching)
+                elif snap['type'] == 'y' and dist_y < snap_threshold:
+                    # Check for X alignments
+                    alignments = [
+                        other['x'],
+                        other['x'] + other['width'] - width,
+                        other['x'] + other['width']/2 - width/2
+                    ]
+                    
+                    best_align_x = x
+                    closest_align_dist = snap_threshold
+                    for ax in alignments:
+                        if abs(ax - x) < closest_align_dist:
+                            best_align_x = ax
+                            closest_align_dist = abs(ax - x)
+
+                    if not self.check_overlap(best_align_x, prop_y, width, height, monitor, all_monitors):
+                        total_dist = dist_y + closest_align_dist
+                        if total_dist < min_distance:
+                            min_distance = total_dist
+                            best_x, best_y = best_align_x, prop_y
+
+        return best_x, best_y
     
     def on_drag_end(self, gesture, offset_x, offset_y):
-        """Handle drag end - finalize position"""
+        """Handle drag end - finalize position and enforce connecting"""
         if not self.dragging_monitor:
             return
+            
+        monitor = self.dragging_monitor
         
-        # Position is already snapped during drag, just finalize
-        self.on_position_changed()
+        # Get final visual position
+        final_x = self.cur_drag_x
+        final_y = self.cur_drag_y
+        
+        monitor_data = self.get_monitor_data()
+        dragged_data = None
+        for m in monitor_data:
+            if m['row'] == monitor:
+                dragged_data = m
+                break
+                
+        if dragged_data:
+            w = dragged_data['width']
+            h = dragged_data['height']
+            
+            # 1. Enforce lack of overlap (critical)
+            # If overlapping, we must move it out. The find_snap_position handles this by finding valid spots.
+            
+            # 2. Enforce touching (critical)
+            # Use strict snap finding to get the closest VALID (touching, non-overlapping) position
+            valid_x, valid_y = self.find_snap_position(
+                monitor, final_x, final_y, w, h, monitor_data
+            )
+            
+            # Update the actual widgets, which will trigger the layout update
+            monitor.x_spin.set_value(int(round(valid_x)))
+            monitor.y_spin.set_value(int(round(valid_y)))
+            
         self.dragging_monitor = None
         self.queue_draw()
+        
+        # Reset visual drag coordinates
+        self.cur_drag_x = 0
+        self.cur_drag_y = 0
+        
+        # Notify change
+        self.on_position_changed()
 
 class HyprDisplaysWindow(Adw.ApplicationWindow):
     def __init__(self, app):
@@ -946,7 +1210,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
     def check_monitor_changes(self):
         """Check if monitors have been connected/disconnected"""
         try:
-            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+            # Use 'all' to see disabled monitors too, so hiding a monitor doesn't trigger a setup change event
+            result = subprocess.run(['hyprctl', 'monitors', 'all', '-j'], 
                                     capture_output=True, text=True, check=True)
             displays_data = json.loads(result.stdout)
             
@@ -999,6 +1264,12 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                     transform = config.get('transform', 0)
                     
                     cmd = f"{monitor_name},{resolution}@{refresh},{x}x{y},{scale},transform,{transform}"
+                    
+                    if config.get('hdr') or config.get('bitdepth') == 10:
+                        cmd += ",bitdepth,10"
+                        
+                    if config.get('vrr') == 1:
+                        cmd += ",vrr,1"
                 
                 print(f"Applying saved config: monitor={cmd}")
                 subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
@@ -1014,7 +1285,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
     def load_displays(self):
         """Load current display configuration from Hyprland"""
         try:
-            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+            # Use 'all' to include disabled monitors
+            result = subprocess.run(['hyprctl', 'monitors', 'all', '-j'], 
                                     capture_output=True, text=True, check=True)
             displays_data = json.loads(result.stdout)
             
@@ -1057,6 +1329,18 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
             saved_config = self.config_manager.load_configuration(monitors_info)
             if saved_config:
                 status_msg = f"Loaded {len(displays_data)} display(s) - Saved config available"
+                
+                # Apply saved settings to UI (specifically HDR and VRR which aren't in hyprctl monitors)
+                for row in self.monitor_rows:
+                    if row.display.name in saved_config:
+                        sc = saved_config[row.display.name]
+                        if 'hdr' in sc:
+                            row.hdr_check.set_active(sc['hdr'])
+                        elif 'bitdepth' in sc:
+                             row.hdr_check.set_active(sc['bitdepth'] == 10)
+                             
+                        if 'vrr' in sc:
+                            row.vrr_check.set_active(sc['vrr'] == 1)
             else:
                 status_msg = f"Loaded {len(displays_data)} display(s)"
             self.status_label.set_text(status_msg)
@@ -1303,8 +1587,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         monitors_conf_path = hypr_dir / "monitors.conf"
         
         try:
-            # Get current monitor details from Hyprland
-            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+            # Get current monitor details from Hyprland (including disabled)
+            result = subprocess.run(['hyprctl', 'monitors', 'all', '-j'], 
                                   capture_output=True, text=True, check=True)
             displays_data = json.loads(result.stdout)
             
@@ -1327,13 +1611,15 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                 monitor_lines.append(config_line + '\n')
                 
                 # Store configuration data for profile
-                mode_text = row.mode_combo.get_active_text()
-                if mode_text:
-                    parts = mode_text.replace("Hz", "").split("@")
-                    resolution = parts[0]
-                    refresh = float(parts[1]) if len(parts) > 1 else row.display.refresh_rate
-                else:
+                resolution = row.res_combo.get_active_text()
+                rate_text = row.rate_combo.get_active_text()
+                
+                if not resolution:
                     resolution = f"{row.display.width}x{row.display.height}"
+                    
+                if rate_text:
+                    refresh = float(rate_text.replace("Hz", ""))
+                else:
                     refresh = row.display.refresh_rate
                 
                 monitor_configs[row.display.name] = {
@@ -1346,7 +1632,9 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                     'disabled': not row.enabled_check.get_active(),
                     'focused': row.display.focused,
                     'width': row.display.width,
-                    'height': row.display.height
+                    'height': row.display.height,
+                    'hdr': row.hdr_check.get_active(),
+                    'vrr': row.vrr_check.get_active()
                 }
                 
                 # Debug: print what we're saving

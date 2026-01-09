@@ -81,7 +81,7 @@ class MonitorDaemon:
     def get_monitors_info(self):
         """Get current monitor information from Hyprland"""
         try:
-            result = subprocess.run(['hyprctl', 'monitors', '-j'], 
+            result = subprocess.run(['hyprctl', 'monitors', 'all', '-j'], 
                                   capture_output=True, text=True, check=True)
             displays_data = json.loads(result.stdout)
             
@@ -116,6 +116,12 @@ class MonitorDaemon:
                     transform = config.get('transform', 0)
                     
                     cmd = f"{monitor_name},{resolution}@{refresh},{x}x{y},{scale},transform,{transform}"
+                    
+                    if config.get('hdr') or config.get('bitdepth') == 10:
+                        cmd += ",bitdepth,10"
+                        
+                    if config.get('vrr') == 1:
+                        cmd += ",vrr,1"
                 
                 result = subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
                                       capture_output=True, text=True, check=False)
