@@ -10,9 +10,13 @@ Background monitor watcher that auto-applies saved layouts.
 
 Install (user scope):
 
+Use the GUI installer:
+
 ```bash
-./install-daemon.sh
+./installer.py
 ```
+
+Or manually copy `src/hyprdisplays-daemon.py` and create a systemd service.
 
 Manage:
 

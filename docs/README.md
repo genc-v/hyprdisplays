@@ -13,11 +13,10 @@ Fedora example:
 
 ```bash
 sudo dnf install python3-gobject gtk4 libadwaita
-./scripts/install.sh            # HyprDisplays
-./scripts/install_settings.sh   # HyprSettings
+./installer.py
 ```
 
-Other distros: install GTK4 + libadwaita packages, then run the same scripts.
+Other distros: install GTK4 + libadwaita packages, then run the installer.
 
 ## Run
 

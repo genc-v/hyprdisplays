@@ -13,11 +13,10 @@ Docs live in `docs/`: [Getting Started](docs/README.md), [Configuration](docs/CO
 
 ```bash
 sudo dnf install python3-gobject gtk4 libadwaita
-./scripts/install.sh            # HyprDisplays
-./scripts/install_settings.sh   # HyprSettings
+./installer.py
 ```
 
-For other distros, install GTK4 + libadwaita packages, then run the same scripts.
+For other distros, install GTK4 + libadwaita packages, then run the installer.
 
 ## Run
 
