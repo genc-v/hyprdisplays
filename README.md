@@ -1,42 +1,38 @@
-# Hyprland GUI Tools
+# HyprDisplays
 
-Two small GTK4 apps for Hyprland:
+A GUI tool for Hyprland to manage your display configuration.
 
-- `HyprDisplays`: drag-and-drop display layout, remembers monitor setups, optional daemon for auto-apply.
-- `HyprSettings`: edit Hyprland options with a simple sidebar and live reload.
+- **Drag-and-drop** monitor layout interface.
+- **Auto-apply** saved profiles when monitors effectively change (requires daemon).
+- **Safety check**: Reverts changes after 15 seconds if not confirmed.
 
-Docs live in `docs/`: [Getting Started](docs/README.md), [Configuration](docs/CONFIGURATION.md), [Advanced](docs/ADVANCED.md).
+## Installation
 
----
-
-## Install (Fedora example)
+### Fedora
 
 ```bash
 sudo dnf install python3-gobject gtk4 libadwaita
 ./installer.py
 ```
 
-For other distros, install GTK4 + libadwaita packages, then run the installer.
+### Other Distributions
 
-## Run
+Install `gtk4`, `libadwaita`, and `python3-gobject`, then run:
 
-Application menu entries: "Hyprland Display Manager" and "Hyprland Settings".
+```bash
+./installer.py
+```
 
-Terminal:
+## Usage
+
+Launch from your application menu ("Hyprland Display Manager") or terminal:
 
 ```bash
 hyprdisplays
-hyprsettings
 ```
 
-## What you get
+## Documentation
 
-- Visual monitor layout with safe apply timeout and config profiles per monitor combo.
-- Settings editor for gaps, borders, input, autostart, rules, keybinds, workspaces.
-- Config files stay readable; your comments remain.
-
-## Quick links
-
-- Usage and setup: `docs/README.md`
-- Config file map: `docs/CONFIGURATION.md`
-- Daemon, systemd, CLI: `docs/ADVANCED.md`
+- [Getting Started](docs/README.md)
+- [Configuration Files](docs/CONFIGURATION.md)
+- [Daemon & Advanced Usage](docs/ADVANCED.md)

@@ -1,39 +1,19 @@
-# Getting Started
+# Getting Started with HyprDisplays
 
-HyprDisplays and HyprSettings are two GTK4 helpers for Hyprland.
+## Overview
 
-- HyprDisplays: drag monitors, save layouts, auto-apply when displays change.
-- HyprSettings: quick edits for gaps, borders, input, autostart, rules, keybinds, workspaces.
+HyprDisplays allows you to visually arrange your monitors, set resolutions, scales, and rotation. It saves these configurations and can automatically apply them when you connect specific monitor combinations.
 
----
+## Basic Usage
 
-## Install
+1. Open **Hyprland Display Manager**.
+2. Drag screens to arrange them.
+3. Click a monitor to adjust scale, resolution, or rotation.
+4. Click **Apply & Save**.
+5. You must confirm the changes within 15 seconds, or they will revert.
 
-Fedora example:
+## Profiles
 
-```bash
-sudo dnf install python3-gobject gtk4 libadwaita
-./installer.py
-```
+HyprDisplays remembers the arrangement for every unique set of connected monitors.
 
-Other distros: install GTK4 + libadwaita packages, then run the installer.
-
-## Run
-
-App menu entries are installed. Or use:
-
-```bash
-hyprdisplays
-hyprsettings
-```
-
-## Basics
-
-- Displays: drag to arrange, set scale/rotation, press "Apply & Save". A 15s confirm keeps you safe.
-- Profiles: each monitor combo is remembered and auto-applied; stored in `~/.config/hypr/hyprdisplays_profiles.json`.
-- Settings: sidebar for common options; raw editors for rules/keybinds/workspaces; changes call `hyprctl reload`.
-
-## More docs
-
-- Config file map and paths: `CONFIGURATION.md`
-- Daemon, systemd, CLI: `ADVANCED.md`
+- **Auto-apply**: If you run the daemon, plugging in a previously configured set of monitors will instantly apply your saved layout.
