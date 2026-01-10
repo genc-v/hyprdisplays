@@ -1875,15 +1875,12 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
                         f.write('\n# Monitor configuration\nsource=monitors.conf\n')
                     print("Added source=monitors.conf to hyprland.conf")
             
-            # Re-apply the configuration to ensure it takes effect
-            # This ensures the saved config matches what's currently displayed
-            for row in self.monitor_rows:
-                config_line = row.get_config_line()
-                cmd = config_line.replace("monitor=", "")
-                result = subprocess.run(['hyprctl', 'keyword', 'monitor', cmd], 
-                                      capture_output=True, text=True, check=False)
-                if result.returncode != 0:
-                    print(f"Warning: Failed to apply monitor config: {result.stderr}")
+            # Reload Hyprland to ensure variables are reset and disabled monitors are handled
+            # This is more robust than applying keywords individually, especially for disabling monitors
+            print("Reloading Hyprland configuration...")
+            result = subprocess.run(['hyprctl', 'reload'], capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                print(f"Warning: Failed to reload hyprland: {result.stderr}")
             
             self.status_label.set_text(f"Config saved for {len(monitors_info)} monitor(s) - Will auto-load on reconnect!")
         except Exception as e:
