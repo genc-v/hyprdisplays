@@ -4,7 +4,7 @@ A GUI tool for Hyprland to manage your display configuration.
 
 ![Main Interface](assets/Pasted%20image.png)
 
-- **Drag-and-drop** monitor layout interface.
+- **Drag-and-drop** monitor layout interface with **magnetic snapping**.
 - **Auto-apply** saved profiles when monitors effectively change (requires daemon).
 - **Safety check**: Reverts changes after 15 seconds if not confirmed.
 
