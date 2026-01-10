@@ -198,10 +198,10 @@ class MonitorRow(Gtk.Box):
         
         # Container for content
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        content.set_margin_top(20)
-        content.set_margin_bottom(20)
-        content.set_margin_start(20)
-        content.set_margin_end(20)
+        content.set_margin_top(12)
+        content.set_margin_bottom(12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
         self.append(content)
         
         # Header with monitor name and primary button
@@ -1250,7 +1250,7 @@ class DisplayCanvas(Gtk.DrawingArea):
 class HyprDisplaysWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Hyprland Display Manager")
-        self.set_default_size(900, 700)
+        self.set_default_size(1100, 750)
         
         # Initialize configuration manager
         self.config_manager = ConfigurationManager()
@@ -1332,8 +1332,8 @@ class HyprDisplaysWindow(Adw.ApplicationWindow):
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         paned.set_end_child(scrolled)
         
-        # Initial position (approx 60% canvas, 40% sidebar)
-        paned.set_position(550)
+        # Initial position (approx 70% canvas, 30% sidebar)
+        paned.set_position(800)
         
         # Content box for monitors
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
